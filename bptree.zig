@@ -3,15 +3,20 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const panic = std.debug.panic;
 
+const Config = struct {
+    key_count_max: usize,
+    debug: bool,
+    search: enum { linear, binary },
+};
+
 pub fn Map(
     comptime Key: type,
     comptime Value: type,
-    key_count_max: usize,
     order: fn (Key, Key) std.math.Order,
-    debug: bool,
+    config: Config,
 ) type {
     comptime {
-        if (key_count_max < 2) @compileError("key_count_max must be at least 2");
+        if (config.key_count_max < 2) @compileError("config.key_count_max must be at least 2");
     }
     return struct {
         allocator: Allocator,
@@ -23,20 +28,20 @@ pub fn Map(
 
         const Branch = extern struct {
             key_count: u8,
-            keys: [key_count_max]Key,
-            children: [key_count_max + 1]ChildPtr,
+            keys: [config.key_count_max]Key,
+            children: [config.key_count_max + 1]ChildPtr,
         };
 
         const Leaf = extern struct {
             key_count: u8,
-            keys: [key_count_max]Key,
-            values: [key_count_max]Value,
+            keys: [config.key_count_max]Key,
+            values: [config.key_count_max]Value,
         };
 
         const Self = @This();
 
-        const max_depth = @round(@log2(@as(f64, @floatFromInt(std.math.maxInt(usize)))) / @log2(@as(f64, @floatFromInt(key_count_max + 1))));
-        const separator_ix = @divFloor(key_count_max, 2);
+        const max_depth = @round(@log2(@as(f64, @floatFromInt(std.math.maxInt(usize)))) / @log2(@as(f64, @floatFromInt(config.key_count_max + 1))));
+        const separator_ix = @divFloor(config.key_count_max, 2);
 
         pub fn init(allocator: Allocator) error{OutOfMemory}!Self {
             // TODO Avoid allocating for empty maps.
@@ -110,7 +115,7 @@ pub fn Map(
                 if (depth < self.depth) {
                     // We are at a branch.
                     const branch = @as(*Branch, @ptrCast(child_ptr));
-                    const search = linearSearch(branch.keys[0..branch.key_count], key);
+                    const search = configSearch(branch.keys[0..branch.key_count], key);
                     parents[depth] = branch;
                     parent_ixes[depth] = search.ix;
                     child_ptr = branch.children[search.ix];
@@ -119,15 +124,15 @@ pub fn Map(
                 } else {
                     // We are at a leaf.
                     const leaf = @as(*Leaf, @ptrCast(child_ptr));
-                    const search = linearSearch(leaf.keys[0..leaf.key_count], key);
+                    const search = configSearch(leaf.keys[0..leaf.key_count], key);
                     switch (search.order) {
                         .eq => {
                             leaf.values[search.ix] = value;
                             return .replaced;
                         },
                         .lt => {
-                            if (leaf.key_count < key_count_max) {
-                                if (debug) std.debug.print("Insert into leaf\n", .{});
+                            if (leaf.key_count < config.key_count_max) {
+                                if (config.debug) std.debug.print("Insert into leaf\n", .{});
                                 insertAt(Key, leaf.keys[0 .. leaf.key_count + 1], key, search.ix);
                                 insertAt(Value, leaf.values[0 .. leaf.key_count + 1], value, search.ix);
                                 leaf.key_count += 1;
@@ -135,27 +140,27 @@ pub fn Map(
                                 var separator_key = leaf.keys[separator_ix - 1];
                                 const leaf_new = try self.allocator.create(Leaf);
                                 if (search.ix < separator_ix) {
-                                    if (debug) std.debug.print("Split leaf left\n", .{});
+                                    if (config.debug) std.debug.print("Split leaf left\n", .{});
                                     std.mem.copyForwards(Key, leaf_new.keys[0..], leaf.keys[separator_ix..]);
                                     std.mem.copyForwards(Value, leaf_new.values[0..], leaf.values[separator_ix..]);
                                     insertAt(Key, leaf.keys[0 .. separator_ix + 1], key, search.ix);
                                     insertAt(Value, leaf.values[0 .. separator_ix + 1], value, search.ix);
                                     leaf.key_count = separator_ix + 1;
-                                    leaf_new.key_count = key_count_max - separator_ix;
+                                    leaf_new.key_count = config.key_count_max - separator_ix;
                                 } else {
-                                    if (debug) std.debug.print("Split leaf right\n", .{});
+                                    if (config.debug) std.debug.print("Split leaf right\n", .{});
                                     const search_ix_new = search.ix - separator_ix;
                                     copyAndInsertAt(Key, leaf_new.keys[0..], leaf.keys[separator_ix..], key, search_ix_new);
                                     copyAndInsertAt(Value, leaf_new.values[0..], leaf.values[separator_ix..], value, search_ix_new);
                                     leaf.key_count = separator_ix;
-                                    leaf_new.key_count = key_count_max - separator_ix + 1;
+                                    leaf_new.key_count = config.key_count_max - separator_ix + 1;
                                 }
                                 // Insert leaf_new into parent.
                                 var child = @as(ChildPtr, @ptrCast(leaf));
                                 var child_new = @as(ChildPtr, @ptrCast(leaf_new));
                                 up: while (true) {
                                     if (depth == 0) {
-                                        if (debug) std.debug.print("Replace root\n", .{});
+                                        if (config.debug) std.debug.print("Replace root\n", .{});
                                         const root_new = try self.allocator.create(Branch);
                                         root_new.key_count = 1;
                                         root_new.keys[0] = separator_key;
@@ -168,8 +173,8 @@ pub fn Map(
                                         depth -= 1;
                                         const parent = parents[depth];
                                         const parent_ix = parent_ixes[depth];
-                                        if (parent.key_count < key_count_max) {
-                                            if (debug) std.debug.print("Insert into branch\n", .{});
+                                        if (parent.key_count < config.key_count_max) {
+                                            if (config.debug) std.debug.print("Insert into branch\n", .{});
                                             insertAt(Key, parent.keys[0 .. parent.key_count + 1], separator_key, parent_ix);
                                             insertAt(ChildPtr, parent.children[0 .. parent.key_count + 2], child_new, parent_ix + 1);
                                             parent.key_count += 1;
@@ -178,20 +183,20 @@ pub fn Map(
                                             const separator_key_new = parent.keys[separator_ix];
                                             const parent_new = try self.allocator.create(Branch);
                                             if (parent_ix <= separator_ix) {
-                                                if (debug) std.debug.print("Split branch left\n", .{});
+                                                if (config.debug) std.debug.print("Split branch left\n", .{});
                                                 std.mem.copyForwards(Key, parent_new.keys[0..], parent.keys[separator_ix + 1 ..]);
                                                 std.mem.copyForwards(ChildPtr, parent_new.children[0..], parent.children[separator_ix + 1 ..]);
                                                 insertAt(Key, parent.keys[0 .. separator_ix + 1], separator_key, parent_ix);
                                                 insertAt(ChildPtr, parent.children[0 .. separator_ix + 2], child_new, parent_ix + 1);
                                                 parent.key_count = separator_ix + 1;
-                                                parent_new.key_count = key_count_max - separator_ix - 1;
+                                                parent_new.key_count = config.key_count_max - separator_ix - 1;
                                             } else {
-                                                if (debug) std.debug.print("Split branch right\n", .{});
+                                                if (config.debug) std.debug.print("Split branch right\n", .{});
                                                 const parent_ix_new = parent_ix - separator_ix - 1;
                                                 copyAndInsertAt(Key, parent_new.keys[0..], parent.keys[separator_ix + 1 ..], separator_key, parent_ix_new);
                                                 copyAndInsertAt(ChildPtr, parent_new.children[0..], parent.children[separator_ix + 1 ..], child_new, parent_ix_new + 1);
                                                 parent.key_count = separator_ix;
-                                                parent_new.key_count = key_count_max - separator_ix;
+                                                parent_new.key_count = config.key_count_max - separator_ix;
                                             }
                                             separator_key = separator_key_new;
                                             child = @ptrCast(parent);
@@ -216,14 +221,14 @@ pub fn Map(
                 if (depth < self.depth) {
                     // We are at a branch.
                     const branch = @as(*Branch, @ptrCast(child_ptr));
-                    const search = linearSearch(branch.keys[0..branch.key_count], key);
+                    const search = configSearch(branch.keys[0..branch.key_count], key);
                     child_ptr = branch.children[search.ix];
                     depth += 1;
                     continue :down;
                 } else {
                     // We are at a leaf.
                     const leaf = @as(*Leaf, @ptrCast(child_ptr));
-                    const search = linearSearch(leaf.keys[0..leaf.key_count], key);
+                    const search = configSearch(leaf.keys[0..leaf.key_count], key);
                     return switch (search.order) {
                         .eq => leaf.values[search.ix],
                         .lt => null,
@@ -237,6 +242,13 @@ pub fn Map(
             order: enum { lt, eq },
         };
 
+        fn configSearch(keys: []Key, search_key: Key) SearchResult {
+            return switch (config.search) {
+                .linear => linearSearch(keys, search_key),
+                .binary => binarySearch(keys, search_key),
+            };
+        }
+
         fn linearSearch(keys: []Key, search_key: Key) SearchResult {
             var ix: usize = 0;
             for (keys) |key| {
@@ -248,6 +260,20 @@ pub fn Map(
             } else {
                 return .{ .ix = ix, .order = .lt };
             }
+        }
+
+        fn binarySearch(keys: []Key, search_key: Key) SearchResult {
+            var left: usize = 0;
+            var right = keys.len;
+            while (left < right) {
+                const mid = left + (right - left) / 2;
+                switch (order(search_key, keys[mid])) {
+                    .eq => return .{ .ix = mid, .order = .eq },
+                    .gt => left = mid + 1,
+                    .lt => right = mid,
+                }
+            }
+            return .{ .ix = left, .order = .lt };
         }
 
         fn insertAt(comptime Elem: type, elems: []Elem, elem: Elem, ix: usize) void {

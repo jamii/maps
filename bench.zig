@@ -107,13 +107,19 @@ pub fn main() !void {
         //Descending{},
         XorShift64{},
     }) |rng| {
-        inline for (&.{11}) |key_count_max| {
-            var map = try btree.Map(u64, u64, key_count_max, order, debug).init(allocator);
-            try bench(&map, rng);
-        }
-        inline for (&.{11}) |key_count_max| {
-            var map = try bptree.Map(u64, u64, key_count_max, order, debug).init(allocator);
-            try bench(&map, rng);
+        //inline for (&.{11}) |key_count_max| {
+        //    var map = try btree.Map(u64, u64, key_count_max, order, debug).init(allocator);
+        //    try bench(&map, rng);
+        //}
+        inline for (&.{ .linear, .binary }) |search| {
+            inline for (&.{ 11, 31 }) |key_count_max| {
+                var map = try bptree.Map(u64, u64, order, .{
+                    .key_count_max = key_count_max,
+                    .search = search,
+                    .debug = debug,
+                }).init(allocator);
+                try bench(&map, rng);
+            }
         }
         if (!debug) {
             {
