@@ -8,7 +8,6 @@ pub fn Map(
     comptime Value: type,
     key_count_max: usize,
     order: fn (Key, Key) std.math.Order,
-    copy: fn (Allocator, Key) error{OutOfMemory}!Key,
     debug: bool,
 ) type {
     comptime {
@@ -133,7 +132,7 @@ pub fn Map(
                                 insertAt(Value, leaf.values[0 .. leaf.key_count + 1], value, search.ix);
                                 leaf.key_count += 1;
                             } else {
-                                var separator_key = try copy(self.allocator, leaf.keys[separator_ix - 1]);
+                                var separator_key = leaf.keys[separator_ix - 1];
                                 const leaf_new = try self.allocator.create(Leaf);
                                 if (search.ix < separator_ix) {
                                     if (debug) std.debug.print("Split leaf left\n", .{});

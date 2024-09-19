@@ -58,11 +58,6 @@ fn order(a: u64, b: u64) std.math.Order {
     return std.math.order(a, b);
 }
 
-fn copy(allocator: Allocator, key: u64) !u64 {
-    _ = allocator;
-    return key;
-}
-
 const SipHashContext = struct {
     pub fn hash(ctx: SipHashContext, key: u64) u64 {
         _ = ctx;
@@ -108,7 +103,7 @@ pub fn main() !void {
     const allocator = std.heap.c_allocator;
     inline for (&.{ Ascending{}, Descending{}, XorShift64{} }) |rng| {
         inline for (&.{ 11, 31 }) |key_count_max| {
-            var map = try btree.Map(u64, u64, key_count_max, order, copy, debug).init(allocator);
+            var map = try btree.Map(u64, u64, key_count_max, order, debug).init(allocator);
             try bench(&map, rng);
             //try map.print(std.io.getStdErr().writer());
         }
