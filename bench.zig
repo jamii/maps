@@ -111,14 +111,17 @@ pub fn main() !void {
         //    var map = try btree.Map(u64, u64, key_count_max, order, debug).init(allocator);
         //    try bench(&map, rng);
         //}
-        inline for (&.{ .linear, .binary }) |search| {
+        inline for (&.{ .lazy, .strict }) |leaf_order| {
             inline for (&.{ 11, 31 }) |key_count_max| {
-                var map = try bptree.Map(u64, u64, order, .{
-                    .key_count_max = key_count_max,
-                    .search = search,
-                    .debug = debug,
-                }).init(allocator);
-                try bench(&map, rng);
+                inline for (&.{ .linear, .binary }) |search| {
+                    var map = try bptree.Map(u64, u64, order, .{
+                        .key_count_max = key_count_max,
+                        .search = search,
+                        .leaf_order = leaf_order,
+                        .debug = debug,
+                    }).init(allocator);
+                    try bench(&map, rng);
+                }
             }
         }
         if (!debug) {

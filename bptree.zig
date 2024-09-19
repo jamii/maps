@@ -7,6 +7,7 @@ const Config = struct {
     key_count_max: usize,
     debug: bool,
     search: enum { linear, binary },
+    leaf_order: enum { strict, lazy },
 };
 
 pub fn Map(
@@ -36,6 +37,16 @@ pub fn Map(
             key_count: u8,
             keys: [config.key_count_max]Key,
             values: [config.key_count_max]Value,
+        };
+
+        const branchSearch = switch (config.search) {
+            .linear => linearSearch,
+            .binary => binarySearch,
+        };
+
+        const leafSearch = switch (config.leaf_order) {
+            .lazy => linearSearch,
+            .strict => branchSearch,
         };
 
         const Self = @This();
@@ -115,7 +126,7 @@ pub fn Map(
                 if (depth < self.depth) {
                     // We are at a branch.
                     const branch = @as(*Branch, @ptrCast(child_ptr));
-                    const search = configSearch(branch.keys[0..branch.key_count], key);
+                    const search = branchSearch(branch.keys[0..branch.key_count], key);
                     parents[depth] = branch;
                     parent_ixes[depth] = search.ix;
                     child_ptr = branch.children[search.ix];
@@ -124,7 +135,7 @@ pub fn Map(
                 } else {
                     // We are at a leaf.
                     const leaf = @as(*Leaf, @ptrCast(child_ptr));
-                    const search = configSearch(leaf.keys[0..leaf.key_count], key);
+                    const search = leafSearch(leaf.keys[0..leaf.key_count], key);
                     switch (search.order) {
                         .eq => {
                             leaf.values[search.ix] = value;
@@ -133,8 +144,16 @@ pub fn Map(
                         .lt => {
                             if (leaf.key_count < config.key_count_max) {
                                 if (config.debug) std.debug.print("Insert into leaf\n", .{});
-                                insertAt(Key, leaf.keys[0 .. leaf.key_count + 1], key, search.ix);
-                                insertAt(Value, leaf.values[0 .. leaf.key_count + 1], value, search.ix);
+                                switch (config.leaf_order) {
+                                    .strict => {
+                                        insertAt(Key, leaf.keys[0 .. leaf.key_count + 1], key, search.ix);
+                                        insertAt(Value, leaf.values[0 .. leaf.key_count + 1], value, search.ix);
+                                    },
+                                    .lazy => {
+                                        leaf.keys[leaf.key_count] = key;
+                                        leaf.values[leaf.key_count] = value;
+                                    },
+                                }
                                 leaf.key_count += 1;
                             } else {
                                 var separator_key = leaf.keys[separator_ix - 1];
@@ -221,14 +240,14 @@ pub fn Map(
                 if (depth < self.depth) {
                     // We are at a branch.
                     const branch = @as(*Branch, @ptrCast(child_ptr));
-                    const search = configSearch(branch.keys[0..branch.key_count], key);
+                    const search = branchSearch(branch.keys[0..branch.key_count], key);
                     child_ptr = branch.children[search.ix];
                     depth += 1;
                     continue :down;
                 } else {
                     // We are at a leaf.
                     const leaf = @as(*Leaf, @ptrCast(child_ptr));
-                    const search = configSearch(leaf.keys[0..leaf.key_count], key);
+                    const search = leafSearch(leaf.keys[0..leaf.key_count], key);
                     return switch (search.order) {
                         .eq => leaf.values[search.ix],
                         .lt => null,
@@ -241,13 +260,6 @@ pub fn Map(
             ix: usize,
             order: enum { lt, eq },
         };
-
-        fn configSearch(keys: []Key, search_key: Key) SearchResult {
-            return switch (config.search) {
-                .linear => linearSearch(keys, search_key),
-                .binary => binarySearch(keys, search_key),
-            };
-        }
 
         fn linearSearch(keys: []Key, search_key: Key) SearchResult {
             var ix: usize = 0;
