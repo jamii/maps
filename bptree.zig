@@ -21,13 +21,13 @@ pub fn Map(
 
         const ChildPtr = *align(8) void;
 
-        const Branch = struct {
+        const Branch = extern struct {
             key_count: u8,
             keys: [key_count_max]Key,
             children: [key_count_max + 1]ChildPtr,
         };
 
-        const Leaf = struct {
+        const Leaf = extern struct {
             key_count: u8,
             keys: [key_count_max]Key,
             values: [key_count_max]Value,
