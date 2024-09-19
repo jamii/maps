@@ -72,9 +72,9 @@ fn main() {
     }
     dbg!(reads.elapsed());
 
-    let scan = std::time::Instant::now();
-    let sum = btree.iter().map(|(bs,_)| bs).sum::<u64>();;
-    println!("full scan took {:?}, sum is {}", scan.elapsed(), sum);
+    //let scan = std::time::Instant::now();
+    //let sum = btree.iter().map(|(bs,_)| bs).sum::<u64>();;
+    //println!("full scan took {:?}, sum is {}", scan.elapsed(), sum);
 
     println!();
     println!("HashMap (sip):");
@@ -97,9 +97,9 @@ fn main() {
     }
     dbg!(reads.elapsed());
 
-    let scan = std::time::Instant::now();
-    let sum = hash.iter().map(|(bs,_)| bs).sum::<u64>();
-    println!("full scan took {:?}, sum is {}", scan.elapsed(), sum);
+    //let scan = std::time::Instant::now();
+    //let sum = hash.iter().map(|(bs,_)| bs).sum::<u64>();
+    //println!("full scan took {:?}, sum is {}", scan.elapsed(), sum);
 
     println!();
     println!("HashMap (fnv):");
@@ -122,7 +122,7 @@ fn main() {
     }
     dbg!(reads.elapsed());
 
-    let scan = std::time::Instant::now();
-    let sum = hash.iter().map(|(bs,_)| bs).sum::<u64>();
-    println!("full scan took {:?}, sum is {}", scan.elapsed(), sum);
+    //let scan = std::time::Instant::now();
+    //let sum = hash.iter().map(|(bs,_)| bs).sum::<u64>();
+    //println!("full scan took {:?}, sum is {}", scan.elapsed(), sum);
 }
