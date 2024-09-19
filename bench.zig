@@ -4,6 +4,7 @@ const assert = std.debug.assert;
 const panic = std.debug.panic;
 
 const btree = @import("btree.zig");
+const bptree = @import("bptree.zig");
 
 const debug = false;
 
@@ -52,7 +53,7 @@ pub const Descending = struct {
     }
 };
 
-const N: u64 = 10_000_000;
+const N: u64 = 100_000_000;
 
 fn order(a: u64, b: u64) std.math.Order {
     return std.math.order(a, b);
@@ -101,11 +102,18 @@ fn bench(map: anytype, rng_init: anytype) !void {
 
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
-    inline for (&.{ Ascending{}, Descending{}, XorShift64{} }) |rng| {
+    inline for (&.{
+        //Ascending{},
+        //Descending{},
+        XorShift64{},
+    }) |rng| {
         inline for (&.{ 11, 31 }) |key_count_max| {
             var map = try btree.Map(u64, u64, key_count_max, order, debug).init(allocator);
             try bench(&map, rng);
-            //try map.print(std.io.getStdErr().writer());
+        }
+        inline for (&.{ 11, 31 }) |key_count_max| {
+            var map = try bptree.Map(u64, u64, key_count_max, order, debug).init(allocator);
+            try bench(&map, rng);
         }
         if (!debug) {
             {

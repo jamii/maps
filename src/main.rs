@@ -49,7 +49,7 @@ impl XorShift64 {
 }
 
 fn main() {
-    const N: u64 = 10_000_000;
+    const N: u64 = 100_000_000;
 
     println!();
     println!("BTreeMap:");
@@ -73,8 +73,8 @@ fn main() {
     dbg!(reads.elapsed());
 
     let scan = std::time::Instant::now();
-    assert_eq!(btree.iter().map(|(bs,_)| bs).sum::<u64>(), 15738135167178238445);
-    println!("full scan took {:?}", scan.elapsed());
+    let sum = btree.iter().map(|(bs,_)| bs).sum::<u64>();;
+    println!("full scan took {:?}, sum is {}", scan.elapsed(), sum);
 
     println!();
     println!("HashMap (sip):");
@@ -98,8 +98,8 @@ fn main() {
     dbg!(reads.elapsed());
 
     let scan = std::time::Instant::now();
-    assert_eq!(hash.iter().map(|(bs,_)| bs).sum::<u64>(), 15738135167178238445);
-    println!("full scan took {:?}", scan.elapsed());
+    let sum = hash.iter().map(|(bs,_)| bs).sum::<u64>();
+    println!("full scan took {:?}, sum is {}", scan.elapsed(), sum);
 
     println!();
     println!("HashMap (fnv):");
@@ -123,6 +123,6 @@ fn main() {
     dbg!(reads.elapsed());
 
     let scan = std::time::Instant::now();
-    assert_eq!(hash.iter().map(|(bs,_)| bs).sum::<u64>(), 15738135167178238445);
-    println!("full scan took {:?}", scan.elapsed());
+    let sum = hash.iter().map(|(bs,_)| bs).sum::<u64>();
+    println!("full scan took {:?}, sum is {}", scan.elapsed(), sum);
 }
