@@ -6,7 +6,7 @@ const panic = std.debug.panic;
 const Config = struct {
     key_count_max: usize,
     debug: bool,
-    search: enum { linear, binary },
+    search: enum { linear, linear_branchless, binary_branchless },
     leaf_order: enum {
         strict,
         lazy, // lazy is broken - need to sort before leaf split
@@ -45,7 +45,8 @@ pub fn Map(
 
         const branchSearch = switch (config.search) {
             .linear => linearSearch,
-            .binary => binarySearch,
+            .linear_branchless => linearSearchBranchless,
+            .binary_branchless => binarySearchBranchless,
         };
 
         const leafSearch = switch (config.leaf_order) {
@@ -261,18 +262,31 @@ pub fn Map(
         }
 
         fn linearSearch(keys: []Key, search_key: Key) usize {
-            var ix: usize = 0;
-            for (keys) |key| {
-                if (less_than(search_key, key)) {
-                    ix += 1;
-                } else {
-                    break;
+            for (keys, 0..) |key, ix| {
+                if (!less_than(search_key, key)) {
+                    return ix;
                 }
+            } else {
+                return keys.len;
             }
-            return ix;
         }
 
-        fn binarySearch(keys: []Key, search_key: Key) usize {
+        fn linearSearchBranchless(keys: []Key, search_key: Key) usize {
+            var result = keys.len;
+            var ix = keys.len;
+            while (ix > 0) {
+                ix -= 1;
+                const key = key: {
+                    @setRuntimeSafety(false);
+                    break :key keys[ix];
+                };
+                const next_result = [_]usize{ ix, result };
+                result = next_result[@intFromBool(less_than(key, search_key))];
+            }
+            return result;
+        }
+
+        fn binarySearchBranchless(keys: []Key, search_key: Key) usize {
             if (keys.len == 0) return 0;
             var offset: usize = 0;
             var length: usize = keys.len;

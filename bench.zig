@@ -128,8 +128,9 @@ pub fn main() !void {
                 31,
             }) |key_count_max| {
                 inline for (&.{
+                    .linear_branchless,
                     .linear,
-                    .binary,
+                    .binary_branchless,
                 }) |search| {
                     var map = try bptree.Map(u64, u64, equal, less_than, .{
                         .key_count_max = key_count_max,
