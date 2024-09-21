@@ -125,34 +125,47 @@ pub fn main() !void {
         //    try bench(&map, rng);
         //}
         inline for (&.{
-            15,
+            //15,
             31,
-            63,
-            127,
+            //63,
+            //127,
         }) |branch_key_count_max| {
             inline for (&.{
-                15,
+                //15,
                 31,
-                63,
-                127,
+                //63,
+                //127,
             }) |leaf_key_count_max| {
                 inline for (&.{
+                    .dynamic,
                     .linear,
-                    .binary_branchless,
+                    //.binary_branchless,
                 }) |branch_search| {
                     inline for (&.{
-                        .linear,
-                        .linear_lazy,
+                        .dynamic,
+                        //.linear,
+                        //.linear_lazy,
                         .binary_branchless,
                     }) |leaf_search| {
-                        var map = try bptree.Map(u64, u64, equal, less_than, .{
-                            .branch_key_count_max = branch_key_count_max,
-                            .leaf_key_count_max = leaf_key_count_max,
-                            .branch_search = branch_search,
-                            .leaf_search = leaf_search,
-                            .debug = debug,
-                        }).init(allocator);
-                        try bench(&map, rng);
+                        inline for (&.{
+                            1,
+                            2,
+                            4,
+                            8,
+                            16,
+                            32,
+                        }) |search_dynamic_cutoff| {
+                            if (branch_search != .dynamic and leaf_search != .dynamic and search_dynamic_cutoff > 1) continue;
+                            var map = try bptree.Map(u64, u64, equal, less_than, .{
+                                .branch_key_count_max = branch_key_count_max,
+                                .leaf_key_count_max = leaf_key_count_max,
+                                .branch_search = branch_search,
+                                .leaf_search = leaf_search,
+                                .search_dynamic_cutoff = search_dynamic_cutoff,
+                                .debug = debug,
+                            }).init(allocator);
+                            try bench(&map, rng);
+                        }
                     }
                 }
             }

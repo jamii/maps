@@ -10,9 +10,10 @@ fn pp(args: anytype) void {
 const Config = struct {
     leaf_key_count_max: usize,
     branch_key_count_max: usize,
+    branch_search: enum { linear, binary_branchless, dynamic },
+    leaf_search: enum { linear, linear_lazy, binary_branchless, dynamic },
+    search_dynamic_cutoff: usize,
     debug: bool,
-    branch_search: enum { linear, binary_branchless },
-    leaf_search: enum { linear, linear_lazy, binary_branchless },
 };
 
 pub fn Map(
@@ -53,12 +54,14 @@ pub fn Map(
         const searchBranch = switch (config.branch_search) {
             .linear => searchLinear,
             .binary_branchless => searchBinaryBranchless,
+            .dynamic => searchDynamic,
         };
 
         const searchLeaf = switch (config.leaf_search) {
             .linear => searchLinear,
             .linear_lazy => searchLinearLazy,
             .binary_branchless => searchBinaryBranchless,
+            .dynamic => searchDynamic,
         };
 
         const Self = @This();
@@ -301,20 +304,14 @@ pub fn Map(
 
         fn searchLinear(keys: []Key, search_key: Key) usize {
             for (keys, 0..) |key, ix| {
-                if (!less_than(key, search_key)) {
-                    return ix;
-                }
-            } else {
-                return keys.len;
-            }
+                if (!less_than(key, search_key)) return ix;
+            } else return keys.len;
         }
 
         fn searchLinearLazy(keys: []Key, search_key: Key) usize {
             for (keys, 0..) |key, ix| {
                 if (equal(key, search_key)) return ix;
-            } else {
-                return keys.len;
-            }
+            } else return keys.len;
         }
 
         fn searchBinaryBranchless(keys: []Key, search_key: Key) usize {
@@ -330,6 +327,21 @@ pub fn Map(
             }
             offset += @intFromBool(less_than(keys[offset], search_key));
             return offset;
+        }
+
+        fn searchDynamic(keys: []Key, search_key: Key) usize {
+            var offset: usize = 0;
+            var length: usize = keys.len;
+            while (length > config.search_dynamic_cutoff) {
+                const half = length / 2;
+                const mid = offset + half;
+                const next_offsets = [_]usize{ offset, mid };
+                offset = next_offsets[@intFromBool(less_than(keys[mid], search_key))];
+                length -= half;
+            }
+            for (keys[offset .. offset + length], offset..) |key, ix| {
+                if (!less_than(key, search_key)) return ix;
+            } else return offset + length;
         }
 
         fn insertAt(comptime Elem: type, elems: []Elem, elem: Elem, ix: usize) void {
