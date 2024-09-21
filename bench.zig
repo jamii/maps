@@ -53,7 +53,15 @@ pub const Descending = struct {
     }
 };
 
-const N: u64 = 100_000_000;
+const N: u64 = 10_000_000;
+
+fn equal(a: u64, b: u64) bool {
+    return a == b;
+}
+
+fn less_than(a: u64, b: u64) bool {
+    return a < b;
+}
 
 fn order(a: u64, b: u64) std.math.Order {
     return std.math.order(a, b);
@@ -111,10 +119,19 @@ pub fn main() !void {
         //    var map = try btree.Map(u64, u64, key_count_max, order, debug).init(allocator);
         //    try bench(&map, rng);
         //}
-        inline for (&.{ .lazy, .strict }) |leaf_order| {
-            inline for (&.{ 11, 31 }) |key_count_max| {
-                inline for (&.{ .linear, .binary }) |search| {
-                    var map = try bptree.Map(u64, u64, order, .{
+        inline for (&.{
+            //.lazy,
+            .strict,
+        }) |leaf_order| {
+            inline for (&.{
+                11,
+                31,
+            }) |key_count_max| {
+                inline for (&.{
+                    .linear,
+                    .binary,
+                }) |search| {
+                    var map = try bptree.Map(u64, u64, equal, less_than, .{
                         .key_count_max = key_count_max,
                         .search = search,
                         .leaf_order = leaf_order,
