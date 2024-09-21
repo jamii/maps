@@ -128,23 +128,32 @@ pub fn main() !void {
             31,
             63,
             127,
-        }) |key_count_max| {
+        }) |branch_key_count_max| {
             inline for (&.{
-                .linear,
-                .binary_branchless,
-            }) |branch_search| {
+                11,
+                15,
+                31,
+                63,
+                127,
+            }) |leaf_key_count_max| {
                 inline for (&.{
                     .linear,
-                    .linear_lazy,
                     .binary_branchless,
-                }) |leaf_search| {
-                    var map = try bptree.Map(u64, u64, equal, less_than, .{
-                        .key_count_max = key_count_max,
-                        .branch_search = branch_search,
-                        .leaf_search = leaf_search,
-                        .debug = debug,
-                    }).init(allocator);
-                    try bench(&map, rng);
+                }) |branch_search| {
+                    inline for (&.{
+                        .linear,
+                        .linear_lazy,
+                        .binary_branchless,
+                    }) |leaf_search| {
+                        var map = try bptree.Map(u64, u64, equal, less_than, .{
+                            .branch_key_count_max = branch_key_count_max,
+                            .leaf_key_count_max = leaf_key_count_max,
+                            .branch_search = branch_search,
+                            .leaf_search = leaf_search,
+                            .debug = debug,
+                        }).init(allocator);
+                        try bench(&map, rng);
+                    }
                 }
             }
         }
