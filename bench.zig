@@ -99,6 +99,8 @@ fn bench(map: anytype, rng_init: anytype) !void {
     }
     std.debug.print("writes = {d}s\n", .{@as(f64, @floatFromInt(std.time.nanoTimestamp() - before_writes)) / 1e9});
 
+    if (@hasDecl(@TypeOf(map.*), "validate")) map.validate();
+
     const before_reads = std.time.nanoTimestamp();
     rng = rng_init;
     for (0..N) |_| {
