@@ -3,14 +3,15 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const panic = std.debug.panic;
 
+fn pp(args: anytype) void {
+    std.debug.print("{any}\n", .{args});
+}
+
 const Config = struct {
     key_count_max: usize,
     debug: bool,
     search: enum { linear, linear_branchless, binary_branchless },
-    leaf_order: enum {
-        strict,
-        lazy, // lazy is broken - need to sort before leaf split
-    },
+    leaf_order: enum { strict, lazy },
 };
 
 pub fn Map(
@@ -39,6 +40,10 @@ pub fn Map(
 
         const Leaf = extern struct {
             key_count: u8,
+            sorted: switch (config.leaf_order) {
+                .strict => void,
+                .lazy => bool,
+            },
             keys: [config.key_count_max]Key,
             values: [config.key_count_max]Value,
         };
@@ -50,7 +55,7 @@ pub fn Map(
         };
 
         const leafSearch = switch (config.leaf_order) {
-            .lazy => linearSearch,
+            .lazy => linearSearchLazy,
             .strict => branchSearch,
         };
 
@@ -143,7 +148,10 @@ pub fn Map(
                     // We are at a leaf.
                     const leaf = @as(*Leaf, @ptrCast(child_ptr));
                     const search_ix = leafSearch(leaf.keys[0..leaf.key_count], key);
-                    if (search_ix < leaf.key_count and equal(key, leaf.keys[search_ix])) {
+                    if (search_ix < leaf.key_count and
+                        (config.leaf_order == .lazy or
+                        equal(key, leaf.keys[search_ix])))
+                    {
                         leaf.values[search_ix] = value;
                         return .replaced;
                     } else {
@@ -157,13 +165,36 @@ pub fn Map(
                                 .lazy => {
                                     leaf.keys[leaf.key_count] = key;
                                     leaf.values[leaf.key_count] = value;
+                                    leaf.sorted = false;
                                 },
                             }
                             leaf.key_count += 1;
                         } else {
-                            var separator_key = leaf.keys[separator_ix - 1];
                             const leaf_new = try self.allocator.create(Leaf);
-                            if (search_ix < separator_ix) {
+                            if (config.leaf_order == .lazy) {
+                                sort(leaf);
+                                leaf_new.sorted = true;
+                            }
+                            var separator_key = leaf.keys[separator_ix - 1];
+                            if (config.leaf_order == .lazy) {
+                                std.mem.copyForwards(Key, leaf_new.keys[0..], leaf.keys[separator_ix..]);
+                                std.mem.copyForwards(Value, leaf_new.values[0..], leaf.values[separator_ix..]);
+                                if (less_than(key, separator_key)) {
+                                    if (config.debug) std.debug.print("Split leaf left\n", .{});
+                                    leaf.keys[separator_ix] = key;
+                                    leaf.values[separator_ix] = value;
+                                    leaf.sorted = false;
+                                    leaf.key_count = separator_ix + 1;
+                                    leaf_new.key_count = config.key_count_max - separator_ix;
+                                } else {
+                                    if (config.debug) std.debug.print("Split leaf right\n", .{});
+                                    leaf_new.keys[config.key_count_max - separator_ix] = key;
+                                    leaf_new.values[config.key_count_max - separator_ix] = value;
+                                    leaf_new.sorted = false;
+                                    leaf.key_count = separator_ix;
+                                    leaf_new.key_count = config.key_count_max - separator_ix + 1;
+                                }
+                            } else if (search_ix < separator_ix) {
                                 if (config.debug) std.debug.print("Split leaf left\n", .{});
                                 std.mem.copyForwards(Key, leaf_new.keys[0..], leaf.keys[separator_ix..]);
                                 std.mem.copyForwards(Value, leaf_new.values[0..], leaf.values[separator_ix..]);
@@ -252,7 +283,10 @@ pub fn Map(
                     // We are at a leaf.
                     const leaf = @as(*Leaf, @ptrCast(child_ptr));
                     const search_ix = leafSearch(leaf.keys[0..leaf.key_count], key);
-                    if (search_ix < leaf.key_count and equal(key, leaf.keys[search_ix])) {
+                    if (search_ix < leaf.key_count and
+                        (config.leaf_order == .lazy or
+                        equal(key, leaf.keys[search_ix])))
+                    {
                         return leaf.values[search_ix];
                     } else {
                         return null;
@@ -263,9 +297,17 @@ pub fn Map(
 
         fn linearSearch(keys: []Key, search_key: Key) usize {
             for (keys, 0..) |key, ix| {
-                if (!less_than(search_key, key)) {
+                if (!less_than(key, search_key)) {
                     return ix;
                 }
+            } else {
+                return keys.len;
+            }
+        }
+
+        fn linearSearchLazy(keys: []Key, search_key: Key) usize {
+            for (keys, 0..) |key, ix| {
+                if (equal(key, search_key)) return ix;
             } else {
                 return keys.len;
             }
@@ -310,6 +352,30 @@ pub fn Map(
             std.mem.copyForwards(Elem, elems, source[0..ix]);
             elems[ix] = elem;
             std.mem.copyForwards(Elem, elems[ix + 1 ..], source[ix..]);
+        }
+
+        fn sort(leaf: *Leaf) void {
+            if (leaf.sorted) return;
+            const Context = struct {
+                keys: []Key,
+                values: []Value,
+                pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+                    return less_than(ctx.keys[a], ctx.keys[b]);
+                }
+                pub fn swap(ctx: @This(), a: usize, b: usize) void {
+                    std.mem.swap(Key, &ctx.keys[a], &ctx.keys[b]);
+                    std.mem.swap(Value, &ctx.values[a], &ctx.values[b]);
+                }
+            };
+            std.sort.pdqContext(0, leaf.key_count, Context{ .keys = &leaf.keys, .values = &leaf.values });
+            if (config.debug) {
+                assert(std.sort.isSorted(Key, leaf.keys[0..leaf.key_count], {}, (struct {
+                    fn lessThan(_: void, a: Key, b: Key) bool {
+                        return less_than(a, b);
+                    }
+                }).lessThan));
+            }
+            leaf.sorted = true;
         }
     };
 }

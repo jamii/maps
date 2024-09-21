@@ -123,7 +123,7 @@ pub fn main() !void {
         //    try bench(&map, rng);
         //}
         inline for (&.{
-            //.lazy,
+            .lazy,
             .strict,
         }) |leaf_order| {
             inline for (&.{
