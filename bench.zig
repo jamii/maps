@@ -125,14 +125,12 @@ pub fn main() !void {
         //    try bench(&map, rng);
         //}
         inline for (&.{
-            11,
             15,
             31,
             63,
             127,
         }) |branch_key_count_max| {
             inline for (&.{
-                11,
                 15,
                 31,
                 63,
