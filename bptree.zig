@@ -10,8 +10,8 @@ fn pp(args: anytype) void {
 const Config = struct {
     key_count_max: usize,
     debug: bool,
-    search: enum { linear, linear_branchless, binary_branchless },
-    leaf_order: enum { strict, lazy },
+    branch_search: enum { linear, binary_branchless },
+    leaf_search: enum { linear, linear_lazy, binary_branchless },
 };
 
 pub fn Map(
@@ -40,23 +40,23 @@ pub fn Map(
 
         const Leaf = extern struct {
             key_count: u8,
-            sorted: switch (config.leaf_order) {
-                .strict => void,
-                .lazy => bool,
+            sorted: switch (config.leaf_search) {
+                .linear_lazy => bool,
+                else => void,
             },
             keys: [config.key_count_max]Key,
             values: [config.key_count_max]Value,
         };
 
-        const branchSearch = switch (config.search) {
-            .linear => linearSearch,
-            .linear_branchless => linearSearchBranchless,
-            .binary_branchless => binarySearchBranchless,
+        const searchBranch = switch (config.branch_search) {
+            .linear => searchLinear,
+            .binary_branchless => searchBinaryBranchless,
         };
 
-        const leafSearch = switch (config.leaf_order) {
-            .lazy => linearSearchLazy,
-            .strict => branchSearch,
+        const searchLeaf = switch (config.leaf_search) {
+            .linear => searchLinear,
+            .linear_lazy => searchLinearLazy,
+            .binary_branchless => searchBinaryBranchless,
         };
 
         const Self = @This();
@@ -117,7 +117,7 @@ pub fn Map(
                 const leaf = @as(*Leaf, @ptrCast(child_ptr));
                 if (self.depth > 0) assert(leaf.key_count >= separator_ix);
                 if (leaf.key_count == 0) return;
-                if (config.leaf_order == .strict) {
+                if (config.leaf_search != .linear_lazy) {
                     for (0..leaf.key_count - 1) |ix| {
                         assert(less_than(leaf.keys[ix], leaf.keys[ix + 1]));
                     }
@@ -138,7 +138,7 @@ pub fn Map(
                 if (depth < self.depth) {
                     // We are at a branch.
                     const branch = @as(*Branch, @ptrCast(child_ptr));
-                    const search_ix = branchSearch(branch.keys[0..branch.key_count], key);
+                    const search_ix = searchBranch(branch.keys[0..branch.key_count], key);
                     parents[depth] = branch;
                     parent_ixes[depth] = search_ix;
                     child_ptr = branch.children[search_ix];
@@ -147,9 +147,9 @@ pub fn Map(
                 } else {
                     // We are at a leaf.
                     const leaf = @as(*Leaf, @ptrCast(child_ptr));
-                    const search_ix = leafSearch(leaf.keys[0..leaf.key_count], key);
+                    const search_ix = searchLeaf(leaf.keys[0..leaf.key_count], key);
                     if (search_ix < leaf.key_count and
-                        (config.leaf_order == .lazy or
+                        (config.leaf_search == .linear_lazy or
                         equal(key, leaf.keys[search_ix])))
                     {
                         leaf.values[search_ix] = value;
@@ -157,26 +157,23 @@ pub fn Map(
                     } else {
                         if (leaf.key_count < config.key_count_max) {
                             if (config.debug) std.debug.print("Insert into leaf\n", .{});
-                            switch (config.leaf_order) {
-                                .strict => {
-                                    insertAt(Key, leaf.keys[0 .. leaf.key_count + 1], key, search_ix);
-                                    insertAt(Value, leaf.values[0 .. leaf.key_count + 1], value, search_ix);
-                                },
-                                .lazy => {
-                                    leaf.keys[leaf.key_count] = key;
-                                    leaf.values[leaf.key_count] = value;
-                                    leaf.sorted = false;
-                                },
+                            if (config.leaf_search == .linear_lazy) {
+                                leaf.keys[leaf.key_count] = key;
+                                leaf.values[leaf.key_count] = value;
+                                leaf.sorted = false;
+                            } else {
+                                insertAt(Key, leaf.keys[0 .. leaf.key_count + 1], key, search_ix);
+                                insertAt(Value, leaf.values[0 .. leaf.key_count + 1], value, search_ix);
                             }
                             leaf.key_count += 1;
                         } else {
                             const leaf_new = try self.allocator.create(Leaf);
-                            if (config.leaf_order == .lazy) {
+                            if (config.leaf_search == .linear_lazy) {
                                 sort(leaf);
                                 leaf_new.sorted = true;
                             }
                             var separator_key = leaf.keys[separator_ix - 1];
-                            if (config.leaf_order == .lazy) {
+                            if (config.leaf_search == .linear_lazy) {
                                 std.mem.copyForwards(Key, leaf_new.keys[0..], leaf.keys[separator_ix..]);
                                 std.mem.copyForwards(Value, leaf_new.values[0..], leaf.values[separator_ix..]);
                                 if (less_than(key, separator_key)) {
@@ -275,16 +272,16 @@ pub fn Map(
                 if (depth < self.depth) {
                     // We are at a branch.
                     const branch = @as(*Branch, @ptrCast(child_ptr));
-                    const search_ix = branchSearch(branch.keys[0..branch.key_count], key);
+                    const search_ix = searchBranch(branch.keys[0..branch.key_count], key);
                     child_ptr = branch.children[search_ix];
                     depth += 1;
                     continue :down;
                 } else {
                     // We are at a leaf.
                     const leaf = @as(*Leaf, @ptrCast(child_ptr));
-                    const search_ix = leafSearch(leaf.keys[0..leaf.key_count], key);
+                    const search_ix = searchLeaf(leaf.keys[0..leaf.key_count], key);
                     if (search_ix < leaf.key_count and
-                        (config.leaf_order == .lazy or
+                        (config.leaf_search == .linear_lazy or
                         equal(key, leaf.keys[search_ix])))
                     {
                         return leaf.values[search_ix];
@@ -295,7 +292,7 @@ pub fn Map(
             }
         }
 
-        fn linearSearch(keys: []Key, search_key: Key) usize {
+        fn searchLinear(keys: []Key, search_key: Key) usize {
             for (keys, 0..) |key, ix| {
                 if (!less_than(key, search_key)) {
                     return ix;
@@ -305,7 +302,7 @@ pub fn Map(
             }
         }
 
-        fn linearSearchLazy(keys: []Key, search_key: Key) usize {
+        fn searchLinearLazy(keys: []Key, search_key: Key) usize {
             for (keys, 0..) |key, ix| {
                 if (equal(key, search_key)) return ix;
             } else {
@@ -313,22 +310,7 @@ pub fn Map(
             }
         }
 
-        fn linearSearchBranchless(keys: []Key, search_key: Key) usize {
-            var result = keys.len;
-            var ix = keys.len;
-            while (ix > 0) {
-                ix -= 1;
-                const key = key: {
-                    @setRuntimeSafety(false);
-                    break :key keys[ix];
-                };
-                const next_result = [_]usize{ ix, result };
-                result = next_result[@intFromBool(less_than(key, search_key))];
-            }
-            return result;
-        }
-
-        fn binarySearchBranchless(keys: []Key, search_key: Key) usize {
+        fn searchBinaryBranchless(keys: []Key, search_key: Key) usize {
             if (keys.len == 0) return 0;
             var offset: usize = 0;
             var length: usize = keys.len;

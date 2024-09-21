@@ -123,24 +123,25 @@ pub fn main() !void {
         //    try bench(&map, rng);
         //}
         inline for (&.{
-            .lazy,
-            .strict,
-        }) |leaf_order| {
+            11,
+            15,
+            31,
+            63,
+            127,
+        }) |key_count_max| {
             inline for (&.{
-                11,
-                15,
-                31,
-                63,
-            }) |key_count_max| {
+                .linear,
+                .binary_branchless,
+            }) |branch_search| {
                 inline for (&.{
-                    //.linear_branchless,
                     .linear,
+                    .linear_lazy,
                     .binary_branchless,
-                }) |search| {
+                }) |leaf_search| {
                     var map = try bptree.Map(u64, u64, equal, less_than, .{
                         .key_count_max = key_count_max,
-                        .search = search,
-                        .leaf_order = leaf_order,
+                        .branch_search = branch_search,
+                        .leaf_search = leaf_search,
                         .debug = debug,
                     }).init(allocator);
                     try bench(&map, rng);
