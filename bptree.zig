@@ -275,17 +275,17 @@ pub fn Map(
         }
 
         fn binarySearch(keys: []Key, search_key: Key) SearchResult {
-            var left: usize = 0;
-            var right = keys.len;
-            while (left < right) {
-                const mid = left + (right - left) / 2;
+            var lo: usize = 0;
+            var hi = keys.len;
+            while (lo < hi) {
+                const mid = lo + (hi - lo) / 2;
                 switch (order(search_key, keys[mid])) {
                     .eq => return .{ .ix = mid, .order = .eq },
-                    .gt => left = mid + 1,
-                    .lt => right = mid,
+                    .gt => lo = mid + 1,
+                    .lt => hi = mid,
                 }
             }
-            return .{ .ix = left, .order = .lt };
+            return .{ .ix = lo, .order = .lt };
         }
 
         fn insertAt(comptime Elem: type, elems: []Elem, elem: Elem, ix: usize) void {
