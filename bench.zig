@@ -103,7 +103,10 @@ fn bench(map: anytype, rng_init: anytype) !void {
     rng = rng_init;
     for (0..N) |_| {
         const k = rng.next() % N;
-        assert(map.get(k).? == k);
+        const v = map.get(k);
+        if (v == null or v.? != k) {
+            panic("map.get({}) == {?}", .{ k, v });
+        }
     }
     std.debug.print("reads = {d}s\n", .{@as(f64, @floatFromInt(std.time.nanoTimestamp() - before_reads)) / 1e9});
 }

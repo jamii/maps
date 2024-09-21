@@ -49,7 +49,7 @@ impl XorShift64 {
 }
 
 fn main() {
-    const N: u64 = 100_000_000;
+    const N: u64 = 10_000_000;
 
     println!();
     println!("BTreeMap:");
