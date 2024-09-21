@@ -7,7 +7,10 @@ const Config = struct {
     key_count_max: usize,
     debug: bool,
     search: enum { linear, binary },
-    leaf_order: enum { strict, lazy },
+    leaf_order: enum {
+        strict,
+        lazy, // lazy is broken - need to sort before leaf split
+    },
 };
 
 pub fn Map(
@@ -107,8 +110,10 @@ pub fn Map(
                 const leaf = @as(*Leaf, @ptrCast(child_ptr));
                 if (self.depth > 0) assert(leaf.key_count >= separator_ix);
                 if (leaf.key_count == 0) return;
-                for (0..leaf.key_count - 1) |ix| {
-                    assert(order(leaf.keys[ix], leaf.keys[ix + 1]) == .lt);
+                if (config.leaf_order == .strict) {
+                    for (0..leaf.key_count - 1) |ix| {
+                        assert(order(leaf.keys[ix], leaf.keys[ix + 1]) == .lt);
+                    }
                 }
                 for (leaf.keys[0..leaf.key_count]) |key| {
                     if (lower_bound != null) assert(order(lower_bound.?, key) == .lt);
