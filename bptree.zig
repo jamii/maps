@@ -10,8 +10,8 @@ fn pp(args: anytype) void {
 const Config = struct {
     leaf_key_count_max: usize,
     branch_key_count_max: usize,
-    branch_search: enum { linear, binary_branchless, dynamic },
-    leaf_search: enum { linear, linear_lazy, binary_branchless, dynamic },
+    branch_search: enum { linear, binary, dynamic },
+    leaf_search: enum { linear, linear_lazy, binary, dynamic },
     search_dynamic_cutoff: usize,
     debug: bool,
 };
@@ -30,7 +30,7 @@ pub fn Map(
     return struct {
         allocator: Allocator,
         root: ChildPtr,
-        count: usize,
+        _count: usize,
         depth: usize,
 
         const ChildPtr = *align(8) void;
@@ -53,14 +53,14 @@ pub fn Map(
 
         const searchBranch = switch (config.branch_search) {
             .linear => searchLinear,
-            .binary_branchless => searchBinaryBranchless,
+            .binary => searchBinary,
             .dynamic => searchDynamic,
         };
 
         const searchLeaf = switch (config.leaf_search) {
             .linear => searchLinear,
             .linear_lazy => searchLinearLazy,
-            .binary_branchless => searchBinaryBranchless,
+            .binary => searchBinary,
             .dynamic => searchDynamic,
         };
 
@@ -80,7 +80,7 @@ pub fn Map(
             return .{
                 .allocator = allocator,
                 .root = @ptrCast(root),
-                .count = 0,
+                ._count = 0,
                 .depth = 0,
             };
         }
@@ -137,6 +137,10 @@ pub fn Map(
                     if (upper_bound != null) assert(!less_than(upper_bound.?, key));
                 }
             }
+        }
+
+        pub fn count(self: *Self) usize {
+            return self._count;
         }
 
         pub fn put(self: *Self, key: Key, value: Value) error{OutOfMemory}!enum { inserted, replaced } {
@@ -268,7 +272,7 @@ pub fn Map(
                                 }
                             }
                         }
-                        self.count += 1;
+                        self._count += 1;
                         return .inserted;
                     }
                 }
@@ -314,7 +318,7 @@ pub fn Map(
             } else return keys.len;
         }
 
-        fn searchBinaryBranchless(keys: []Key, search_key: Key) usize {
+        fn searchBinary(keys: []Key, search_key: Key) usize {
             if (keys.len == 0) return 0;
             var offset: usize = 0;
             var length: usize = keys.len;

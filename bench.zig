@@ -20,6 +20,54 @@ pub inline fn rdtscp() u64 {
     return (@as(u64, hi) << 32) | @as(u64, low);
 }
 
+const Bin = struct {
+    min: u64 = std.math.maxInt(u64),
+    max: u64 = 0,
+    sum: u64 = 0,
+    count: u64 = 0,
+
+    fn add(self: *Bin, measurement: u64) void {
+        self.min = @min(self.min, measurement);
+        self.max = @max(self.max, measurement);
+        self.sum += measurement;
+        self.count += 1;
+    }
+
+    fn mean(self: Bin) u64 {
+        return std.math.divCeil(u64, self.sum, self.count) catch unreachable;
+    }
+};
+
+const Bins = struct {
+    bins: []Bin,
+
+    fn init(allocator: Allocator, log_count: usize) !Bins {
+        const bins = try allocator.alloc(Bin, log_count);
+        for (bins) |*bin| bin.* = Bin{};
+        return .{ .bins = bins };
+    }
+
+    fn get(self: Bins, map_count: usize) *Bin {
+        return &self.bins[std.math.log2_int_ceil(usize, map_count)];
+    }
+};
+
+const Metrics = struct {
+    insert_miss: Bins,
+    insert_hit: Bins,
+    lookup_miss: Bins,
+    lookup_hit: Bins,
+
+    fn init(allocator: Allocator, log_count: usize) !Metrics {
+        return .{
+            .insert_miss = try Bins.init(allocator, log_count),
+            .insert_hit = try Bins.init(allocator, log_count),
+            .lookup_miss = try Bins.init(allocator, log_count),
+            .lookup_hit = try Bins.init(allocator, log_count),
+        };
+    }
+};
+
 pub const XorShift64 = struct {
     a: u64 = 123456789,
 
@@ -44,7 +92,7 @@ pub const Ascending = struct {
 };
 
 pub const Descending = struct {
-    a: u64 = N,
+    a: u64,
 
     pub fn next(self: *Descending) u64 {
         const b = self.a;
@@ -52,8 +100,6 @@ pub const Descending = struct {
         return b;
     }
 };
-
-const N: u64 = 10_000_000;
 
 fn equal(a: u64, b: u64) bool {
     return a == b;
@@ -81,40 +127,117 @@ const SipHashContext = struct {
     }
 };
 
-fn bench(map: anytype, rng_init: anytype) !void {
-    std.debug.print("{s} {s}\n", .{ @typeName(@TypeOf(map)), @typeName(@TypeOf(rng_init)) });
+fn bench_one(map: anytype, rng_init: anytype, log_count: usize, metrics: Metrics) !void {
+    const count = @as(usize, 1) << @intCast(log_count);
 
-    const before_writes = std.time.nanoTimestamp();
     var rng = rng_init;
-    for (0..N) |_| {
-        const k = rng.next() % N;
+    for (0..count) |_| {
+        const k = rng.next();
         if (debug) {
             std.debug.print("writing {}, count = {}, depth = {}\n", .{ k, map.count, map.depth });
         }
+
+        const before = rdtscp();
         _ = try map.put(k, k);
+        const after = rdtscp();
+        metrics.insert_miss.get(map.count()).add(after - before);
+
+        if (debug) {
+            try map.print(std.io.getStdErr().writer());
+            map.validate();
+        }
+        //if (map.count() != count) {
+        //    std.debug.print("Warning: {} duplicate keys\n", .{count - map.count()});
+        //}
+    }
+
+    if (@hasDecl(@TypeOf(map.*), "validate")) map.validate();
+
+    rng = rng_init;
+    const count_before = map.count();
+    for (0..count) |_| {
+        const k = rng.next();
+        if (debug) {
+            std.debug.print("writing {}, count = {}, depth = {}\n", .{ k, map.count, map.depth });
+        }
+
+        const before = rdtscp();
+        _ = try map.put(k, k);
+        const after = rdtscp();
+        metrics.insert_hit.get(map.count()).add(after - before);
+
         if (debug) {
             try map.print(std.io.getStdErr().writer());
             map.validate();
         }
     }
-    std.debug.print("writes = {d}s\n", .{@as(f64, @floatFromInt(std.time.nanoTimestamp() - before_writes)) / 1e9});
+    const count_after = map.count();
+    if (count_before != count_after) {
+        panic("Reinserted {} keys", .{count_after - count_before});
+    }
 
-    if (@hasDecl(@TypeOf(map.*), "validate")) map.validate();
-
-    const before_reads = std.time.nanoTimestamp();
     rng = rng_init;
-    for (0..N) |_| {
-        const k = rng.next() % N;
+    for (0..count) |_| {
+        const k = rng.next();
+
+        const before = rdtscp();
         const v = map.get(k);
+        const after = rdtscp();
+        metrics.lookup_hit.get(map.count()).add(after - before);
+
         if (v == null or v.? != k) {
             panic("map.get({}) == {?}", .{ k, v });
         }
     }
-    std.debug.print("reads = {d}s\n", .{@as(f64, @floatFromInt(std.time.nanoTimestamp() - before_reads)) / 1e9});
+
+    // don't reinit rng
+    for (0..count) |_| {
+        const k = rng.next();
+
+        const before = rdtscp();
+        const v = map.get(k);
+        const after = rdtscp();
+        metrics.lookup_miss.get(map.count()).add(after - before);
+
+        if (v != null) {
+            panic("map.get({}) == {?}", .{ k, v });
+        }
+    }
+}
+
+fn bench(allocator: Allocator, map: anytype, rng_init: anytype, log_count: usize) !void {
+    std.debug.print("{s} {s}\n", .{ @typeName(@TypeOf(map)), @typeName(@TypeOf(rng_init)) });
+    const metrics = try Metrics.init(allocator, log_count);
+    for (0..log_count) |log_count_one| {
+        // Try to get roughly `1 << log_count` samples per bin.
+        for (0..@as(usize, 1) << @intCast(log_count - log_count_one)) |_| {
+            try bench_one(map, rng_init, log_count_one, metrics);
+        }
+    }
+    inline for (@typeInfo(Metrics).Struct.fields) |field| {
+        const bins = @field(metrics, field.name);
+        std.debug.print("{s: <11} min =", .{field.name});
+        for (bins.bins) |bin| {
+            std.debug.print(" {: >8}", .{bin.min});
+        }
+        std.debug.print("\n", .{});
+        std.debug.print("{s: <11} avg =", .{""});
+        for (bins.bins) |bin| {
+            std.debug.print(" {: >8}", .{bin.mean()});
+        }
+        std.debug.print("\n", .{});
+        std.debug.print("{s: <11} max =", .{""});
+        for (bins.bins) |bin| {
+            std.debug.print(" {: >8}", .{bin.max});
+        }
+        std.debug.print("\n", .{});
+    }
+    std.debug.print("\n", .{});
 }
 
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
+    const log_count = 20;
     inline for (&.{
         //Ascending{},
         //Descending{},
@@ -125,35 +248,35 @@ pub fn main() !void {
         //    try bench(&map, rng);
         //}
         inline for (&.{
-            //15,
+            15,
             31,
-            //63,
-            //127,
+            63,
+            127,
         }) |branch_key_count_max| {
             inline for (&.{
-                //15,
+                15,
                 31,
-                //63,
-                //127,
+                63,
+                127,
             }) |leaf_key_count_max| {
                 inline for (&.{
-                    .dynamic,
+                    //.dynamic,
                     .linear,
-                    //.binary_branchless,
+                    .binary,
                 }) |branch_search| {
                     inline for (&.{
-                        .dynamic,
-                        //.linear,
-                        //.linear_lazy,
-                        .binary_branchless,
+                        //.dynamic,
+                        .linear,
+                        .linear_lazy,
+                        .binary,
                     }) |leaf_search| {
                         inline for (&.{
                             1,
-                            2,
-                            4,
-                            8,
-                            16,
-                            32,
+                            //2,
+                            //4,
+                            //8,
+                            //16,
+                            //32,
                         }) |search_dynamic_cutoff| {
                             if (branch_search != .dynamic and leaf_search != .dynamic and search_dynamic_cutoff > 1) continue;
                             var map = try bptree.Map(u64, u64, equal, less_than, .{
@@ -164,7 +287,7 @@ pub fn main() !void {
                                 .search_dynamic_cutoff = search_dynamic_cutoff,
                                 .debug = debug,
                             }).init(allocator);
-                            try bench(&map, rng);
+                            try bench(allocator, &map, rng, log_count);
                         }
                     }
                 }
@@ -173,11 +296,11 @@ pub fn main() !void {
         if (!debug) {
             {
                 var map = std.HashMap(u64, u64, SipHashContext, std.hash_map.default_max_load_percentage).init(allocator);
-                try bench(&map, rng);
+                try bench(allocator, &map, rng, log_count);
             }
             {
                 var map = std.AutoHashMap(u64, u64).init(allocator);
-                try bench(&map, rng);
+                try bench(allocator, &map, rng, log_count);
             }
         }
         std.debug.print("\n", .{});
