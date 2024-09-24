@@ -57,6 +57,7 @@ const Metrics = struct {
     insert_hit: Bins,
     lookup_miss: Bins,
     lookup_hit: Bins,
+    free: Bins,
 
     fn init(allocator: Allocator, log_count: usize) !Metrics {
         return .{
@@ -64,6 +65,7 @@ const Metrics = struct {
             .insert_hit = try Bins.init(allocator, log_count),
             .lookup_miss = try Bins.init(allocator, log_count),
             .lookup_hit = try Bins.init(allocator, log_count),
+            .free = try Bins.init(allocator, log_count),
         };
     }
 };
@@ -92,7 +94,7 @@ pub const Ascending = struct {
 };
 
 pub const Descending = struct {
-    a: u64,
+    a: u64 = std.math.maxInt(u64),
 
     pub fn next(self: *Descending) u64 {
         const b = self.a;
@@ -215,9 +217,12 @@ fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count:
         for (0..@as(usize, 1) << @intCast(log_count - log_count_one)) |_| {
             const map_or_err = Map.init(allocator);
             var map = if (@typeInfo(@TypeOf(map_or_err)) == .ErrorUnion) try map_or_err else map_or_err;
-            defer map.deinit();
-
             try bench_one(&map, rng_init, log_count_one, metrics);
+
+            const before = rdtscp();
+            map.deinit();
+            const after = rdtscp();
+            metrics.free.get(map.count()).add(after - before);
         }
     }
     inline for (@typeInfo(Metrics).Struct.fields) |field| {

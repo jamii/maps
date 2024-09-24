@@ -57,6 +57,7 @@ struct Metrics {
     insert_hit: Bins,
     lookup_miss: Bins,
     lookup_hit: Bins,
+    free: Bins,
 }
 
 impl Metrics {
@@ -66,6 +67,7 @@ impl Metrics {
             insert_hit: Bins::new(log_count),
             lookup_miss: Bins::new(log_count),
             lookup_hit: Bins::new(log_count),
+            free: Bins::new(log_count),
         }
     }
 }
@@ -149,7 +151,13 @@ macro_rules! bench {
         for log_count_one in 0..$log_count {
             for _ in 0..(1 << ($log_count - log_count_one)) {
                 let mut map = <$Map>::new();
-                bench_one!(map, $rng, log_count_one, metrics)
+                bench_one!(map, $rng, log_count_one, metrics);
+
+                let len = map.len();
+                let before = rdtscp();
+                drop(map);
+                let after = rdtscp();
+                metrics.free.get(len).add(after - before);
             }
         }
         print!("insert_miss min =");
@@ -209,6 +217,21 @@ macro_rules! bench {
         println!("");
         print!("            max =");
         for bin in &metrics.lookup_hit.bins {
+            print!(" {:>8}", bin.max);
+        }
+        println!("");
+        print!("free        min =");
+        for bin in &metrics.free.bins {
+            print!(" {:>8}", bin.min);
+        }
+        println!("");
+        print!("            avg =");
+        for bin in &metrics.free.bins {
+            print!(" {:>8}", bin.mean());
+        }
+        println!("");
+        print!("            max =");
+        for bin in &metrics.free.bins {
             print!(" {:>8}", bin.max);
         }
         println!("");
