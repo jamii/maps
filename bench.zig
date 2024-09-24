@@ -128,6 +128,8 @@ const SipHashContext = struct {
 };
 
 fn bench_one(map: anytype, rng_init: anytype, log_count: usize, metrics: Metrics) !void {
+    if (map.count() != 0) panic("Non-empty map", .{});
+
     const count = @as(usize, 1) << @intCast(log_count);
 
     var rng = rng_init;
@@ -205,13 +207,17 @@ fn bench_one(map: anytype, rng_init: anytype, log_count: usize, metrics: Metrics
     }
 }
 
-fn bench(allocator: Allocator, map: anytype, rng_init: anytype, log_count: usize) !void {
-    std.debug.print("{s} {s}\n", .{ @typeName(@TypeOf(map)), @typeName(@TypeOf(rng_init)) });
+fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count: usize) !void {
+    std.debug.print("{s} {s}\n", .{ @typeName(Map), @typeName(@TypeOf(rng_init)) });
     const metrics = try Metrics.init(allocator, log_count);
     for (0..log_count) |log_count_one| {
         // Try to get roughly `1 << log_count` samples per bin.
         for (0..@as(usize, 1) << @intCast(log_count - log_count_one)) |_| {
-            try bench_one(map, rng_init, log_count_one, metrics);
+            const map_or_err = Map.init(allocator);
+            var map = if (@typeInfo(@TypeOf(map_or_err)) == .ErrorUnion) try map_or_err else map_or_err;
+            defer map.deinit();
+
+            try bench_one(&map, rng_init, log_count_one, metrics);
         }
     }
     inline for (@typeInfo(Metrics).Struct.fields) |field| {
@@ -237,7 +243,7 @@ fn bench(allocator: Allocator, map: anytype, rng_init: anytype, log_count: usize
 
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
-    const log_count = 25;
+    const log_count = 20;
     inline for (&.{
         //Ascending{},
         //Descending{},
@@ -279,32 +285,32 @@ pub fn main() !void {
                             //32,
                         }) |search_dynamic_cutoff| {
                             if (branch_search != .dynamic and leaf_search != .dynamic and search_dynamic_cutoff > 1) continue;
-                            var map = try bptree.Map(u64, u64, equal, less_than, .{
+                            const Map = bptree.Map(u64, u64, equal, less_than, .{
                                 .branch_key_count_max = branch_key_count_max,
                                 .leaf_key_count_max = leaf_key_count_max,
                                 .branch_search = branch_search,
                                 .leaf_search = leaf_search,
                                 .search_dynamic_cutoff = search_dynamic_cutoff,
                                 .debug = debug,
-                            }).init(allocator);
-                            try bench(allocator, &map, rng, log_count);
+                            });
+                            try bench(allocator, Map, rng, log_count);
                         }
                     }
                 }
             }
         }
         {
-            var map = try btree.Map(u64, u64, equal, less_than, 15, debug).init(allocator);
-            try bench(allocator, &map, rng, log_count);
+            const Map = btree.Map(u64, u64, equal, less_than, 127, debug);
+            try bench(allocator, Map, rng, log_count);
         }
         if (!debug) {
             {
-                var map = std.HashMap(u64, u64, SipHashContext, std.hash_map.default_max_load_percentage).init(allocator);
-                try bench(allocator, &map, rng, log_count);
+                const Map = std.HashMap(u64, u64, SipHashContext, std.hash_map.default_max_load_percentage);
+                try bench(allocator, Map, rng, log_count);
             }
             {
-                var map = std.AutoHashMap(u64, u64).init(allocator);
-                try bench(allocator, &map, rng, log_count);
+                const Map = std.AutoHashMap(u64, u64);
+                try bench(allocator, Map, rng, log_count);
             }
         }
         std.debug.print("\n", .{});

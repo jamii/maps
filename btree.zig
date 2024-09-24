@@ -52,6 +52,23 @@ pub fn Map(
             };
         }
 
+        pub fn deinit(self: *Self) void {
+            self.deinitNode(0, self.root);
+        }
+
+        pub fn deinitNode(self: *Self, depth: usize, child_ptr: ChildPtr) void {
+            if (depth < self.depth) {
+                const branch = @as(*Branch, @ptrCast(child_ptr));
+                for (branch.children[0 .. branch.key_count + 1]) |child| {
+                    self.deinitNode(depth + 1, child);
+                }
+                self.allocator.destroy(branch);
+            } else {
+                const leaf = @as(*Leaf, @ptrCast(child_ptr));
+                self.allocator.destroy(leaf);
+            }
+        }
+
         pub fn print(self: *Self, writer: anytype) @TypeOf(writer.print("", .{})) {
             try self.printNode(writer, 0, self.root);
         }

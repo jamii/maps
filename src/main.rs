@@ -95,6 +95,8 @@ impl XorShift64 {
 
 macro_rules! bench_one {
     ( $map:expr, $rng:expr, $log_count:expr, $metrics:expr ) => {{
+        if $map.len() != 0 { panic!("Non-empty map"); }
+
         let count = 1 << $log_count;
 
         let mut rng = $rng.renew();
@@ -142,11 +144,12 @@ macro_rules! bench_one {
 }
 
 macro_rules! bench {
-    ( $map:expr, $rng:expr, $log_count:expr ) => {{
+    ( $Map:ty, $rng:expr, $log_count:expr ) => {{
         let mut metrics = Metrics::new($log_count);
         for log_count_one in 0..$log_count {
             for _ in 0..(1 << ($log_count - log_count_one)) {
-                bench_one!($map, $rng, log_count_one, metrics)
+                let mut map = <$Map>::new();
+                bench_one!(map, $rng, log_count_one, metrics)
             }
         }
         print!("insert_miss min =");
@@ -213,15 +216,13 @@ macro_rules! bench {
 }
 
 fn main() {
-    let log_count = 25;
+    let log_count = 20;
 
     println!();
     println!("BTreeMap:");
-    let mut map = std::collections::BTreeMap::new();
-    bench!(map, XorShift64::new(), log_count);
+    bench!(std::collections::BTreeMap::<u64, u64>, XorShift64::new(), log_count);
 
     println!();
     println!("HashMap (sip):");
-    let mut map = std::collections::HashMap::<u64, u64>::default();
-    bench!(map, XorShift64::new(), log_count);
+    bench!(std::collections::HashMap::<u64, u64>, XorShift64::new(), log_count);
 }
