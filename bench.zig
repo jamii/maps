@@ -8,7 +8,7 @@ const bptree = @import("bptree.zig");
 
 const debug = false;
 
-pub inline fn rdtscp() u64 {
+inline fn rdtscp() u64 {
     var hi: u64 = undefined;
     var low: u64 = undefined;
     asm volatile ("rdtscp"
@@ -237,7 +237,7 @@ fn bench(allocator: Allocator, map: anytype, rng_init: anytype, log_count: usize
 
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
-    const log_count = 20;
+    const log_count = 25;
     inline for (&.{
         //Ascending{},
         //Descending{},
@@ -249,26 +249,26 @@ pub fn main() !void {
         //}
         inline for (&.{
             15,
-            31,
-            63,
-            127,
+            //31,
+            //63,
+            //127,
         }) |branch_key_count_max| {
             inline for (&.{
                 15,
-                31,
-                63,
-                127,
+                //31,
+                //63,
+                //127,
             }) |leaf_key_count_max| {
                 inline for (&.{
                     //.dynamic,
                     .linear,
-                    .binary,
+                    //.binary,
                 }) |branch_search| {
                     inline for (&.{
                         //.dynamic,
                         .linear,
-                        .linear_lazy,
-                        .binary,
+                        //.linear_lazy,
+                        //.binary,
                     }) |leaf_search| {
                         inline for (&.{
                             1,
@@ -292,6 +292,10 @@ pub fn main() !void {
                     }
                 }
             }
+        }
+        {
+            var map = try btree.Map(u64, u64, equal, less_than, 15, debug).init(allocator);
+            try bench(allocator, &map, rng, log_count);
         }
         if (!debug) {
             {

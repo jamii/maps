@@ -1,44 +1,89 @@
-// extracted from the fnv crate for minor, mostly
-// compile-time optimizations.
-#[allow(missing_copy_implementations)]
-pub struct Hasher(u64);
-
-impl Default for Hasher {
-    #[inline]
-    fn default() -> Hasher {
-        Hasher(0xcbf29ce484222325)
-    }
+#[inline]
+fn rdtscp() -> u64 {
+    let mut aux = 0;
+    unsafe { core::arch::x86_64::__rdtscp(&mut aux) }
 }
 
-impl std::hash::Hasher for Hasher {
-    #[inline]
-    fn finish(&self) -> u64 {
-        self.0
-    }
+#[derive(Clone, Debug)]
+struct Bin {
+    min: u64,
+    max: u64,
+    sum: u64,
+    count: u64,
+}
 
-    #[inline]
-    #[allow(clippy::cast_lossless)]
-    fn write(&mut self, bytes: &[u8]) {
-        let Hasher(mut hash) = *self;
-
-        for byte in bytes.iter() {
-            hash ^= *byte as u64;
-            hash = hash.wrapping_mul(0x100000001b3);
+impl Bin {
+    fn new() -> Self {
+        Bin {
+            min: u64::MAX,
+            max: 0,
+            sum: 0,
+            count: 0,
         }
+    }
 
-        *self = Hasher(hash);
+    fn add(&mut self, measurement: u64) {
+        self.min = std::cmp::min(self.min, measurement);
+        self.max = std::cmp::max(self.max, measurement);
+        self.sum += measurement;
+        self.count += 1;
+    }
+
+    fn mean(&self) -> u64 {
+        return u64::div_ceil(self.sum, self.count);
     }
 }
 
-#[allow(unused)]
-type FastMap8<K, V> = std::collections::HashMap<K, V, std::hash::BuildHasherDefault<Hasher>>;
+#[derive(Debug)]
+struct Bins {
+    bins: Vec<Bin>,
+}
 
-pub struct XorShift64 {
+impl Bins {
+    fn new(log_count: usize) -> Self {
+        Bins {
+            bins: vec![Bin::new(); log_count],
+        }
+    }
+
+    fn get(&mut self, map_count: usize) -> &mut Bin {
+        return &mut self.bins[(map_count as f64).log2().ceil() as usize];
+    }
+}
+
+#[derive(Debug)]
+struct Metrics {
+    insert_miss: Bins,
+    insert_hit: Bins,
+    lookup_miss: Bins,
+    lookup_hit: Bins,
+}
+
+impl Metrics {
+    fn new(log_count: usize) -> Self {
+        Metrics {
+            insert_miss: Bins::new(log_count),
+            insert_hit: Bins::new(log_count),
+            lookup_miss: Bins::new(log_count),
+            lookup_hit: Bins::new(log_count),
+        }
+    }
+}
+
+struct XorShift64 {
     a: u64,
 }
 
 impl XorShift64 {
-    pub fn next(&mut self) -> u64 {
+    fn new() -> Self {
+        XorShift64 { a: 123456789 }
+    }
+
+    fn renew(self) -> Self {
+        Self::new()
+    }
+
+    fn next(&mut self) -> u64 {
         let mut x = self.a;
         x ^= x << 13;
         x ^= x >> 7;
@@ -48,81 +93,135 @@ impl XorShift64 {
     }
 }
 
+macro_rules! bench_one {
+    ( $map:expr, $rng:expr, $log_count:expr, $metrics:expr ) => {{
+        let count = 1 << $log_count;
+
+        let mut rng = $rng.renew();
+        for _ in 0..count {
+            let k = rng.next();
+            let before = rdtscp();
+            $map.insert(k, k);
+            let after = rdtscp();
+            $metrics.insert_miss.get($map.len()).add(after - before);
+        }
+
+        let mut rng = $rng.renew();
+        for _ in 0..count {
+            let k = rng.next();
+            let before = rdtscp();
+            $map.insert(k, k);
+            let after = rdtscp();
+            $metrics.insert_hit.get($map.len()).add(after - before);
+        }
+
+        let mut rng = $rng.renew();
+        for _ in 0..count {
+            let k = rng.next();
+            let before = rdtscp();
+            let v = $map.get(&k);
+            let after = rdtscp();
+            $metrics.lookup_hit.get($map.len()).add(after - before);
+            if v.is_none() {
+                panic!("Oh no!")
+            }
+        }
+
+        // don't reinit rng
+        for _ in 0..count {
+            let k = rng.next();
+            let before = rdtscp();
+            let v = $map.get(&k);
+            let after = rdtscp();
+            $metrics.lookup_miss.get($map.len()).add(after - before);
+            if v.is_some() {
+                panic!("Oh no!")
+            }
+        }
+    }};
+}
+
+macro_rules! bench {
+    ( $map:expr, $rng:expr, $log_count:expr ) => {{
+        let mut metrics = Metrics::new($log_count);
+        for log_count_one in 0..$log_count {
+            for _ in 0..(1 << ($log_count - log_count_one)) {
+                bench_one!($map, $rng, log_count_one, metrics)
+            }
+        }
+        print!("insert_miss min =");
+        for bin in &metrics.insert_miss.bins {
+            print!(" {:>8}", bin.min);
+        }
+        println!("");
+        print!("            avg =");
+        for bin in &metrics.insert_miss.bins {
+            print!(" {:>8}", bin.mean());
+        }
+        println!("");
+        print!("            max =");
+        for bin in &metrics.insert_miss.bins {
+            print!(" {:>8}", bin.max);
+        }
+        println!("");
+        print!("insert_hit  min =");
+        for bin in &metrics.insert_hit.bins {
+            print!(" {:>8}", bin.min);
+        }
+        println!("");
+        print!("            avg =");
+        for bin in &metrics.insert_hit.bins {
+            print!(" {:>8}", bin.mean());
+        }
+        println!("");
+        print!("            max =");
+        for bin in &metrics.insert_hit.bins {
+            print!(" {:>8}", bin.max);
+        }
+        println!("");
+        print!("lookup_miss min =");
+        for bin in &metrics.lookup_miss.bins {
+            print!(" {:>8}", bin.min);
+        }
+        println!("");
+        print!("            avg =");
+        for bin in &metrics.lookup_miss.bins {
+            print!(" {:>8}", bin.mean());
+        }
+        println!("");
+        print!("            max =");
+        for bin in &metrics.lookup_miss.bins {
+            print!(" {:>8}", bin.max);
+        }
+        println!("");
+        print!("lookup_hit  min =");
+        for bin in &metrics.lookup_hit.bins {
+            print!(" {:>8}", bin.min);
+        }
+        println!("");
+        print!("            avg =");
+        for bin in &metrics.lookup_hit.bins {
+            print!(" {:>8}", bin.mean());
+        }
+        println!("");
+        print!("            max =");
+        for bin in &metrics.lookup_hit.bins {
+            print!(" {:>8}", bin.max);
+        }
+        println!("");
+    }};
+}
+
 fn main() {
-    const N: u64 = 100_000_000;
+    let log_count = 25;
 
     println!();
     println!("BTreeMap:");
-    let mut btree = std::collections::BTreeMap::new();
-
-    let writes = std::time::Instant::now();
-    let mut rng = XorShift64 { a: 123456789 };
-    for _ in 0_u64..N {
-        let k = rng.next();
-        //println!("{}", k);
-        assert!(btree.insert(k, k).is_none());
-    }
-    dbg!(writes.elapsed());
-
-    let reads = std::time::Instant::now();
-    let mut rng = XorShift64 { a: 123456789 };
-    for _ in 0_u64..N {
-        let k = rng.next();
-        assert_eq!(btree.get(&k), Some(&k));
-    }
-    dbg!(reads.elapsed());
-
-    //let scan = std::time::Instant::now();
-    //let sum = btree.iter().map(|(bs,_)| bs).sum::<u64>();;
-    //println!("full scan took {:?}, sum is {}", scan.elapsed(), sum);
+    let mut map = std::collections::BTreeMap::new();
+    bench!(map, XorShift64::new(), log_count);
 
     println!();
     println!("HashMap (sip):");
-    let mut hash = std::collections::HashMap::<u64,u64>::default();
-
-    let writes = std::time::Instant::now();
-    let mut rng = XorShift64 { a: 123456789 };
-    for _ in 0_u64..N {
-        let k = rng.next();
-        //println!("{}", k);
-        assert!(hash.insert(k, k).is_none());
-    }
-    dbg!(writes.elapsed());
-
-    let reads = std::time::Instant::now();
-    let mut rng = XorShift64 { a: 123456789 };
-    for _ in 0_u64..N {
-        let k = rng.next();
-        assert_eq!(hash.get(&k), Some(&k));
-    }
-    dbg!(reads.elapsed());
-
-    //let scan = std::time::Instant::now();
-    //let sum = hash.iter().map(|(bs,_)| bs).sum::<u64>();
-    //println!("full scan took {:?}, sum is {}", scan.elapsed(), sum);
-
-    println!();
-    println!("HashMap (fnv):");
-    let mut hash = FastMap8::default();
-
-    let writes = std::time::Instant::now();
-    let mut rng = XorShift64 { a: 123456789 };
-    for _ in 0_u64..N {
-        let k = rng.next();
-        //println!("{}", k);
-        assert!(hash.insert(k, k).is_none());
-    }
-    dbg!(writes.elapsed());
-
-    let reads = std::time::Instant::now();
-    let mut rng = XorShift64 { a: 123456789 };
-    for _ in 0_u64..N {
-        let k = rng.next();
-        assert_eq!(hash.get(&k), Some(&k));
-    }
-    dbg!(reads.elapsed());
-
-    //let scan = std::time::Instant::now();
-    //let sum = hash.iter().map(|(bs,_)| bs).sum::<u64>();
-    //println!("full scan took {:?}, sum is {}", scan.elapsed(), sum);
+    let mut map = std::collections::HashMap::<u64, u64>::default();
+    bench!(map, XorShift64::new(), log_count);
 }
