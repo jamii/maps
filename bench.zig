@@ -243,7 +243,7 @@ fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count:
 
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
-    const log_count = 20;
+    const log_count = 25;
     inline for (&.{
         //Ascending{},
         //Descending{},
@@ -254,14 +254,14 @@ pub fn main() !void {
         //    try bench(&map, rng);
         //}
         inline for (&.{
-            15,
-            //31,
+            //15,
+            31,
             //63,
             //127,
         }) |branch_key_count_max| {
             inline for (&.{
-                15,
-                //31,
+                //15,
+                31,
                 //63,
                 //127,
             }) |leaf_key_count_max| {
@@ -300,7 +300,7 @@ pub fn main() !void {
             }
         }
         {
-            const Map = btree.Map(u64, u64, equal, less_than, 127, debug);
+            const Map = btree.Map(u64, u64, equal, less_than, 31, debug);
             try bench(allocator, Map, rng, log_count);
         }
         if (!debug) {

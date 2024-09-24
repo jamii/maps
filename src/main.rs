@@ -216,7 +216,7 @@ macro_rules! bench {
 }
 
 fn main() {
-    let log_count = 20;
+    let log_count = 25;
 
     println!();
     println!("BTreeMap:");
