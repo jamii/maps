@@ -57,7 +57,8 @@ const Metrics = struct {
     insert_hit: Bins,
     lookup_miss: Bins,
     lookup_hit: Bins,
-    lookup_hit256: Bins,
+    lookup_hits: Bins,
+    lookup_chain: Bins,
     free: Bins,
 
     fn init(allocator: Allocator, log_count: usize) !Metrics {
@@ -66,11 +67,14 @@ const Metrics = struct {
             .insert_hit = try Bins.init(allocator, log_count),
             .lookup_miss = try Bins.init(allocator, log_count),
             .lookup_hit = try Bins.init(allocator, log_count),
-            .lookup_hit256 = try Bins.init(allocator, log_count),
+            .lookup_hits = try Bins.init(allocator, log_count),
+            .lookup_chain = try Bins.init(allocator, log_count),
             .free = try Bins.init(allocator, log_count),
         };
     }
 };
+
+const batch_size = 256;
 
 pub const XorShift64 = struct {
     a: u64 = 123456789,
@@ -131,20 +135,26 @@ const SipHashContext = struct {
     }
 };
 
-fn bench_one(map: anytype, rng_init: anytype, log_count: usize, metrics: Metrics) !void {
+fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !void {
     if (map.count() != 0) panic("Non-empty map", .{});
 
     const count = @as(usize, 1) << @intCast(log_count);
 
-    var rng = rng_init;
-    for (0..count) |_| {
-        const k = rng.next();
+    const keys = try map.allocator.alloc(u64, count);
+    const keys_missing = try map.allocator.alloc(u64, count);
+    const values = try map.allocator.alloc(u64, count);
+
+    for (keys) |*key| key.* = rng.next();
+    for (keys_missing) |*key| key.* = rng.next();
+    for (values, 0..) |*value, i| value.* = keys[(i + 1) % count];
+
+    for (keys, values) |key, value| {
         if (debug) {
-            std.debug.print("writing {}, count = {}, depth = {}\n", .{ k, map.count, map.depth });
+            std.debug.print("writing {}, count = {}, depth = {}\n", .{ key, map.count, map.depth });
         }
 
         const before = rdtscp();
-        _ = try map.put(k, k);
+        _ = try map.put(key, value);
         const after = rdtscp();
         metrics.insert_miss.get(map.count()).add(after - before);
 
@@ -152,23 +162,18 @@ fn bench_one(map: anytype, rng_init: anytype, log_count: usize, metrics: Metrics
             try map.print(std.io.getStdErr().writer());
             map.validate();
         }
-        //if (map.count() != count) {
-        //    std.debug.print("Warning: {} duplicate keys\n", .{count - map.count()});
-        //}
     }
 
     if (@hasDecl(@TypeOf(map.*), "validate")) map.validate();
 
-    rng = rng_init;
     const count_before = map.count();
-    for (0..count) |_| {
-        const k = rng.next();
+    for (keys, values) |key, value| {
         if (debug) {
-            std.debug.print("writing {}, count = {}, depth = {}\n", .{ k, map.count, map.depth });
+            std.debug.print("writing {}, count = {}, depth = {}\n", .{ key, map.count, map.depth });
         }
 
         const before = rdtscp();
-        _ = try map.put(k, k);
+        _ = try map.put(key, value);
         const after = rdtscp();
         metrics.insert_hit.get(map.count()).add(after - before);
 
@@ -182,64 +187,70 @@ fn bench_one(map: anytype, rng_init: anytype, log_count: usize, metrics: Metrics
         panic("Reinserted {} keys", .{count_after - count_before});
     }
 
-    rng = rng_init;
-    for (0..count) |_| {
-        const k = rng.next();
-
+    for (keys, values) |key, value| {
         const before = rdtscp();
-        const v = map.get(k);
+        const value_found = map.get(key);
         const after = rdtscp();
         metrics.lookup_hit.get(map.count()).add(after - before);
 
-        if (v == null or v.? != k) {
-            panic("map.get({}) == {?}", .{ k, v });
+        if (value_found == null or value_found.? != value) {
+            panic("map.get({}) == {?}", .{ key, value_found });
         }
     }
 
-    // don't reinit rng
-    for (0..count) |_| {
-        const k = rng.next();
-
+    for (keys_missing) |key| {
         const before = rdtscp();
-        const v = map.get(k);
+        const value_found = map.get(key);
         const after = rdtscp();
         metrics.lookup_miss.get(map.count()).add(after - before);
 
-        if (v != null) {
-            panic("map.get({}) == {?}", .{ k, v });
+        if (value_found != null) {
+            panic("map.get({}) == {?}", .{ key, value_found });
         }
     }
 
-    rng = rng_init;
-    var keys: [256]u64 = undefined;
-    var values: [256]?u64 = undefined;
-    for (0..@divTrunc(count, 256)) |_| {
-        for (&keys) |*key| key.* = rng.next();
-
+    var values_found: [batch_size]?u64 = undefined;
+    for (0..@divTrunc(count, batch_size)) |i| {
         const before = rdtscp();
-        for (&values, &keys) |*value, key| {
+        for (keys[batch_size * i ..][0..batch_size], &values_found) |key, *value| {
             value.* = map.get(key);
         }
         const after = rdtscp();
-        metrics.lookup_hit256.get(map.count()).add(after - before);
+        metrics.lookup_hits.get(map.count()).add(@divTrunc(after - before, batch_size));
 
-        for (keys, values) |key, value| {
-            if (value == null or value.? != key) {
-                panic("map.get({}) == {?}", .{ key, value });
+        for (keys[batch_size * i ..][0..batch_size], values[batch_size * i ..][0..batch_size], values_found) |key, value, value_found| {
+            if (value_found == null or value_found.? != value) {
+                panic("map.get({}) == {?}", .{ key, value_found });
             }
+        }
+    }
+
+    for (0..@divTrunc(count, batch_size)) |i| {
+        var key = keys[batch_size * i];
+
+        const before = rdtscp();
+        for (0..batch_size) |_| {
+            key = map.get(key).?;
+        }
+        const after = rdtscp();
+        metrics.lookup_chain.get(map.count()).add(@divTrunc(after - before, batch_size));
+
+        const key_expected = keys[(batch_size * (i + 1)) % count];
+        if (key != key_expected) {
+            panic("Expected {}, found {}", .{ key_expected, key });
         }
     }
 }
 
-fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count: usize) !void {
-    std.debug.print("{s} {s}\n", .{ @typeName(Map), @typeName(@TypeOf(rng_init)) });
+fn bench(allocator: Allocator, comptime Map: type, rng: anytype, log_count: usize) !void {
+    std.debug.print("{s} {s}\n", .{ @typeName(Map), @typeName(@TypeOf(rng)) });
     const metrics = try Metrics.init(allocator, log_count);
     for (0..log_count) |log_count_one| {
         // Try to get roughly `1 << log_count` samples per bin.
         for (0..@as(usize, 1) << @intCast(log_count - log_count_one)) |_| {
             const map_or_err = Map.init(allocator);
             var map = if (@typeInfo(@TypeOf(map_or_err)) == .ErrorUnion) try map_or_err else map_or_err;
-            try bench_one(&map, rng_init, log_count_one, metrics);
+            try bench_one(&map, rng, log_count_one, metrics);
 
             const before = rdtscp();
             map.deinit();
@@ -282,27 +293,29 @@ fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count:
 
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
-    const log_count = 25;
+    const log_count = 20;
     inline for (&.{
         //Ascending{},
         //Descending{},
         XorShift64{},
-    }) |rng| {
+    }) |rng_init| {
         //inline for (&.{11}) |key_count_max| {
         //    var map = try btree.Map(u64, u64, key_count_max, order, debug).init(allocator);
         //    try bench(&map, rng);
         //}
         inline for (&.{
+            //11,
             //15,
-            31,
+            //31,
             //63,
             //127,
         }) |branch_key_count_max| {
             inline for (&.{
                 //15,
-                31,
+                //31,
                 //63,
                 //127,
+                branch_key_count_max,
             }) |leaf_key_count_max| {
                 inline for (&.{
                     //.dynamic,
@@ -332,24 +345,34 @@ pub fn main() !void {
                                 .search_dynamic_cutoff = search_dynamic_cutoff,
                                 .debug = debug,
                             });
-                            try bench(allocator, Map, rng, log_count);
+                            var rng = rng_init;
+                            try bench(allocator, Map, &rng, log_count);
                         }
                     }
                 }
             }
         }
-        {
-            const Map = btree.Map(u64, u64, equal, less_than, 31, debug);
-            try bench(allocator, Map, rng, log_count);
+        inline for (&.{
+            11,
+            //15,
+            //31,
+            //63,
+            //127,
+        }) |key_count_max| {
+            const Map = btree.Map(u64, u64, equal, less_than, key_count_max, debug);
+            var rng = rng_init;
+            try bench(allocator, Map, &rng, log_count);
         }
         if (!debug) {
             {
                 const Map = std.HashMap(u64, u64, SipHashContext, std.hash_map.default_max_load_percentage);
-                try bench(allocator, Map, rng, log_count);
+                var rng = rng_init;
+                try bench(allocator, Map, &rng, log_count);
             }
             {
                 const Map = std.AutoHashMap(u64, u64);
-                try bench(allocator, Map, rng, log_count);
+                var rng = rng_init;
+                try bench(allocator, Map, &rng, log_count);
             }
         }
         std.debug.print("\n", .{});
