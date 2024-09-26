@@ -175,11 +175,11 @@ pub fn Map(
                                 leaf_new.key_count = key_count_max - separator_ix - 1;
                             } else {
                                 if (debug) std.debug.print("Split leaf right\n", .{});
-                                const search_ix_new = search_ix - separator_ix;
-                                copyAndInsertAt(Key, leaf_new.keys[0..], leaf.keys[separator_ix..], key, search_ix_new);
-                                copyAndInsertAt(Value, leaf_new.values[0..], leaf.values[separator_ix..], value, search_ix_new);
+                                const search_ix_new = search_ix - separator_ix - 1;
+                                copyAndInsertAt(Key, leaf_new.keys[0..], leaf.keys[separator_ix + 1 ..], key, search_ix_new);
+                                copyAndInsertAt(Value, leaf_new.values[0..], leaf.values[separator_ix + 1 ..], value, search_ix_new);
                                 leaf.key_count = separator_ix;
-                                leaf_new.key_count = key_count_max - separator_ix + 1;
+                                leaf_new.key_count = key_count_max - separator_ix;
                             }
                             // Insert leaf_new into parent.
                             var child = @as(ChildPtr, @ptrCast(leaf));
