@@ -262,15 +262,16 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
     }
 }
 
-fn bench(allocator: Allocator, comptime Map: type, rng: anytype, log_count: usize) !void {
-    std.debug.print("{s} {s}\n", .{ @typeName(Map), @typeName(@TypeOf(rng)) });
+fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count: usize) !void {
+    std.debug.print("{s} {s}\n", .{ @typeName(Map), @typeName(@TypeOf(rng_init)) });
     const metrics = try Metrics.init(allocator, log_count);
+    var rng = rng_init;
     for (0..log_count) |log_count_one| {
         // Try to get roughly `1 << log_count` samples per bin.
         for (0..@as(usize, 1) << @intCast(log_count - log_count_one)) |_| {
             const map_or_err = Map.init(allocator);
             var map = if (@typeInfo(@TypeOf(map_or_err)) == .ErrorUnion) try map_or_err else map_or_err;
-            try bench_one(&map, rng, log_count_one, metrics);
+            try bench_one(&map, &rng, log_count_one, metrics);
 
             const before = rdtscp();
             map.deinit();
@@ -325,7 +326,7 @@ pub fn main() !void {
         //    try bench(&map, rng);
         //}
         inline for (&.{
-            //11,
+            11,
             //15,
             //31,
             //63,
@@ -366,8 +367,7 @@ pub fn main() !void {
                                 .search_dynamic_cutoff = search_dynamic_cutoff,
                                 .debug = debug,
                             });
-                            var rng = rng_init;
-                            try bench(allocator, Map, &rng, log_count);
+                            try bench(allocator, Map, rng_init, log_count);
                         }
                     }
                 }
@@ -381,19 +381,16 @@ pub fn main() !void {
             //127,
         }) |key_count_max| {
             const Map = btree.Map(u64, u64, equal, less_than, key_count_max, debug);
-            var rng = rng_init;
-            try bench(allocator, Map, &rng, log_count);
+            try bench(allocator, Map, rng_init, log_count);
         }
         if (!debug) {
             {
                 const Map = std.HashMap(u64, u64, SipHashContext, std.hash_map.default_max_load_percentage);
-                var rng = rng_init;
-                try bench(allocator, Map, &rng, log_count);
+                try bench(allocator, Map, rng_init, log_count);
             }
             {
                 const Map = std.AutoHashMap(u64, u64);
-                var rng = rng_init;
-                try bench(allocator, Map, &rng, log_count);
+                try bench(allocator, Map, rng_init, log_count);
             }
         }
         std.debug.print("\n", .{});

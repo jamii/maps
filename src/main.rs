@@ -81,10 +81,6 @@ impl XorShift64 {
         XorShift64 { a: 123456789 }
     }
 
-    fn renew(self) -> Self {
-        Self::new()
-    }
-
     fn next(&mut self) -> u64 {
         let mut x = self.a;
         x ^= x << 13;
@@ -97,33 +93,44 @@ impl XorShift64 {
 
 macro_rules! bench_one {
     ( $map:expr, $rng:expr, $log_count:expr, $metrics:expr ) => {{
-        if $map.len() != 0 { panic!("Non-empty map"); }
+        if $map.len() != 0 {
+            panic!("Non-empty map");
+        }
 
         let count = 1 << $log_count;
 
-        let mut rng = $rng.renew();
+        let mut keys = vec![];
         for _ in 0..count {
-            let k = rng.next();
+            keys.push($rng.next());
+        }
+
+        let mut keys_missing = vec![];
+        for _ in 0..count {
+            keys_missing.push($rng.next());
+        }
+
+        let mut values = vec![];
+        for i in 0..count {
+            values.push(keys[(i + 1) % count]);
+        }
+
+        for (k, v) in std::iter::zip(&keys, &values) {
             let before = rdtscp();
-            $map.insert(k, k);
+            $map.insert(*k, *v);
             let after = rdtscp();
             $metrics.insert_miss.get($map.len()).add(after - before);
         }
 
-        let mut rng = $rng.renew();
-        for _ in 0..count {
-            let k = rng.next();
+        for (k, v) in std::iter::zip(&keys, &values) {
             let before = rdtscp();
-            $map.insert(k, k);
+            $map.insert(*k, *v);
             let after = rdtscp();
             $metrics.insert_hit.get($map.len()).add(after - before);
         }
 
-        let mut rng = $rng.renew();
-        for _ in 0..count {
-            let k = rng.next();
+        for k in &keys {
             let before = rdtscp();
-            let v = $map.get(&k);
+            let v = $map.get(k);
             let after = rdtscp();
             $metrics.lookup_hit.get($map.len()).add(after - before);
             if v.is_none() {
@@ -131,11 +138,9 @@ macro_rules! bench_one {
             }
         }
 
-        // don't reinit rng
-        for _ in 0..count {
-            let k = rng.next();
+        for k in &keys_missing {
             let before = rdtscp();
-            let v = $map.get(&k);
+            let v = $map.get(k);
             let after = rdtscp();
             $metrics.lookup_miss.get($map.len()).add(after - before);
             if v.is_some() {
@@ -160,77 +165,82 @@ macro_rules! bench {
                 metrics.free.get(len).add(after - before);
             }
         }
-        print!("insert_miss min =");
+        println!("insert_miss");
+        print!("min =");
         for bin in &metrics.insert_miss.bins {
             print!(" {:>8}", bin.min);
         }
         println!("");
-        print!("            avg =");
+        print!("avg =");
         for bin in &metrics.insert_miss.bins {
             print!(" {:>8}", bin.mean());
         }
         println!("");
-        print!("            max =");
+        print!("max =");
         for bin in &metrics.insert_miss.bins {
             print!(" {:>8}", bin.max);
         }
         println!("");
-        print!("insert_hit  min =");
+        println!("insert_hit");
+        print!("min =");
         for bin in &metrics.insert_hit.bins {
             print!(" {:>8}", bin.min);
         }
         println!("");
-        print!("            avg =");
+        print!("avg =");
         for bin in &metrics.insert_hit.bins {
             print!(" {:>8}", bin.mean());
         }
         println!("");
-        print!("            max =");
+        print!("max =");
         for bin in &metrics.insert_hit.bins {
             print!(" {:>8}", bin.max);
         }
         println!("");
-        print!("lookup_miss min =");
+        println!("lookup_miss");
+        print!("min =");
         for bin in &metrics.lookup_miss.bins {
             print!(" {:>8}", bin.min);
         }
         println!("");
-        print!("            avg =");
+        print!("avg =");
         for bin in &metrics.lookup_miss.bins {
             print!(" {:>8}", bin.mean());
         }
         println!("");
-        print!("            max =");
+        print!("max =");
         for bin in &metrics.lookup_miss.bins {
             print!(" {:>8}", bin.max);
         }
         println!("");
-        print!("lookup_hit  min =");
+        println!("lookup_hit");
+        print!("min =");
         for bin in &metrics.lookup_hit.bins {
             print!(" {:>8}", bin.min);
         }
         println!("");
-        print!("            avg =");
+        print!("avg =");
         for bin in &metrics.lookup_hit.bins {
             print!(" {:>8}", bin.mean());
         }
         println!("");
-        print!("            max =");
+        print!("max =");
         for bin in &metrics.lookup_hit.bins {
             print!(" {:>8}", bin.max);
         }
         println!("");
-        print!("free        min =");
+        println!("free");
+        print!("min =");
         for bin in &metrics.free.bins {
             print!(" {:>8}", bin.min);
         }
         println!("");
-        print!("            avg =");
+        print!("avg =");
         for bin in &metrics.free.bins {
             print!(" {:>8}", bin.mean());
         }
         println!("");
-        print!("            max =");
+        print!("max =");
         for bin in &metrics.free.bins {
             print!(" {:>8}", bin.max);
         }
@@ -239,13 +249,15 @@ macro_rules! bench {
 }
 
 fn main() {
-    let log_count = 25;
+    let log_count = 20;
 
     println!();
     println!("BTreeMap:");
-    bench!(std::collections::BTreeMap::<u64, u64>, XorShift64::new(), log_count);
+    let mut rng = XorShift64::new();
+    bench!(std::collections::BTreeMap::<u64, u64>, rng, log_count);
 
     println!();
     println!("HashMap (sip):");
-    bench!(std::collections::HashMap::<u64, u64>, XorShift64::new(), log_count);
+    let mut rng = XorShift64::new();
+    bench!(std::collections::HashMap::<u64, u64>, rng, log_count);
 }
