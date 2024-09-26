@@ -57,8 +57,8 @@ const Metrics = struct {
     insert_hit: Bins,
     lookup_miss: Bins,
     lookup_hit: Bins,
-    lookup_hits: Bins,
-    lookup_chain: Bins,
+    lookup_hit_batch: Bins,
+    lookup_hit_chain: Bins,
     free: Bins,
 
     fn init(allocator: Allocator, log_count: usize) !Metrics {
@@ -67,8 +67,8 @@ const Metrics = struct {
             .insert_hit = try Bins.init(allocator, log_count),
             .lookup_miss = try Bins.init(allocator, log_count),
             .lookup_hit = try Bins.init(allocator, log_count),
-            .lookup_hits = try Bins.init(allocator, log_count),
-            .lookup_chain = try Bins.init(allocator, log_count),
+            .lookup_hit_batch = try Bins.init(allocator, log_count),
+            .lookup_hit_chain = try Bins.init(allocator, log_count),
             .free = try Bins.init(allocator, log_count),
         };
     }
@@ -216,7 +216,7 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
             value.* = map.get(key);
         }
         const after = rdtscp();
-        metrics.lookup_hits.get(map.count()).add(@divTrunc(after - before, batch_size));
+        metrics.lookup_hit_batch.get(map.count()).add(@divTrunc(after - before, batch_size));
 
         for (keys[batch_size * i ..][0..batch_size], values[batch_size * i ..][0..batch_size], values_found) |key, value, value_found| {
             if (value_found == null or value_found.? != value) {
@@ -233,7 +233,7 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
             key = map.get(key).?;
         }
         const after = rdtscp();
-        metrics.lookup_chain.get(map.count()).add(@divTrunc(after - before, batch_size));
+        metrics.lookup_hit_chain.get(map.count()).add(@divTrunc(after - before, batch_size));
 
         const key_expected = keys[(batch_size * (i + 1)) % count];
         if (key != key_expected) {
@@ -260,7 +260,8 @@ fn bench(allocator: Allocator, comptime Map: type, rng: anytype, log_count: usiz
     }
     inline for (@typeInfo(Metrics).Struct.fields) |field| {
         const bins = @field(metrics, field.name);
-        std.debug.print("{s: <12} min =", .{field.name});
+        std.debug.print("{s}:\n", .{field.name});
+        std.debug.print("min =", .{});
         for (bins.bins) |bin| {
             if (bin.count == 0) {
                 std.debug.print(" {s: >8}", .{"-"});
@@ -269,7 +270,7 @@ fn bench(allocator: Allocator, comptime Map: type, rng: anytype, log_count: usiz
             }
         }
         std.debug.print("\n", .{});
-        std.debug.print("{s: <12} avg =", .{""});
+        std.debug.print("avg =", .{});
         for (bins.bins) |bin| {
             if (bin.count == 0) {
                 std.debug.print(" {s: >8}", .{"-"});
@@ -278,7 +279,7 @@ fn bench(allocator: Allocator, comptime Map: type, rng: anytype, log_count: usiz
             }
         }
         std.debug.print("\n", .{});
-        std.debug.print("{s: <12} max =", .{""});
+        std.debug.print("max =", .{});
         for (bins.bins) |bin| {
             if (bin.count == 0) {
                 std.debug.print(" {s: >8}", .{"-"});
