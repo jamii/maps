@@ -57,6 +57,7 @@ const Metrics = struct {
     insert_hit: Bins,
     lookup_miss: Bins,
     lookup_hit: Bins,
+    lookup_hit256: Bins,
     free: Bins,
 
     fn init(allocator: Allocator, log_count: usize) !Metrics {
@@ -65,6 +66,7 @@ const Metrics = struct {
             .insert_hit = try Bins.init(allocator, log_count),
             .lookup_miss = try Bins.init(allocator, log_count),
             .lookup_hit = try Bins.init(allocator, log_count),
+            .lookup_hit256 = try Bins.init(allocator, log_count),
             .free = try Bins.init(allocator, log_count),
         };
     }
@@ -207,6 +209,26 @@ fn bench_one(map: anytype, rng_init: anytype, log_count: usize, metrics: Metrics
             panic("map.get({}) == {?}", .{ k, v });
         }
     }
+
+    rng = rng_init;
+    var keys: [256]u64 = undefined;
+    var values: [256]?u64 = undefined;
+    for (0..@divTrunc(count, 256)) |_| {
+        for (&keys) |*key| key.* = rng.next();
+
+        const before = rdtscp();
+        for (&values, &keys) |*value, key| {
+            value.* = map.get(key);
+        }
+        const after = rdtscp();
+        metrics.lookup_hit256.get(map.count()).add(after - before);
+
+        for (keys, values) |key, value| {
+            if (value == null or value.? != key) {
+                panic("map.get({}) == {?}", .{ key, value });
+            }
+        }
+    }
 }
 
 fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count: usize) !void {
@@ -227,19 +249,31 @@ fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count:
     }
     inline for (@typeInfo(Metrics).Struct.fields) |field| {
         const bins = @field(metrics, field.name);
-        std.debug.print("{s: <11} min =", .{field.name});
+        std.debug.print("{s: <12} min =", .{field.name});
         for (bins.bins) |bin| {
-            std.debug.print(" {: >8}", .{bin.min});
+            if (bin.count == 0) {
+                std.debug.print(" {s: >8}", .{"-"});
+            } else {
+                std.debug.print(" {: >8}", .{bin.min});
+            }
         }
         std.debug.print("\n", .{});
-        std.debug.print("{s: <11} avg =", .{""});
+        std.debug.print("{s: <12} avg =", .{""});
         for (bins.bins) |bin| {
-            std.debug.print(" {: >8}", .{bin.mean()});
+            if (bin.count == 0) {
+                std.debug.print(" {s: >8}", .{"-"});
+            } else {
+                std.debug.print(" {: >8}", .{bin.mean()});
+            }
         }
         std.debug.print("\n", .{});
-        std.debug.print("{s: <11} max =", .{""});
+        std.debug.print("{s: <12} max =", .{""});
         for (bins.bins) |bin| {
-            std.debug.print(" {: >8}", .{bin.max});
+            if (bin.count == 0) {
+                std.debug.print(" {s: >8}", .{"-"});
+            } else {
+                std.debug.print(" {: >8}", .{bin.max});
+            }
         }
         std.debug.print("\n", .{});
     }
