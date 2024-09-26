@@ -56,6 +56,7 @@ const Metrics = struct {
     insert_miss: Bins,
     insert_hit: Bins,
     lookup_miss: Bins,
+    lookup_miss_batch: Bins,
     lookup_hit: Bins,
     lookup_hit_batch: Bins,
     lookup_hit_chain: Bins,
@@ -66,6 +67,7 @@ const Metrics = struct {
             .insert_miss = try Bins.init(allocator, log_count),
             .insert_hit = try Bins.init(allocator, log_count),
             .lookup_miss = try Bins.init(allocator, log_count),
+            .lookup_miss_batch = try Bins.init(allocator, log_count),
             .lookup_hit = try Bins.init(allocator, log_count),
             .lookup_hit_batch = try Bins.init(allocator, log_count),
             .lookup_hit_chain = try Bins.init(allocator, log_count),
@@ -198,19 +200,9 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
         }
     }
 
-    for (keys_missing) |key| {
-        const before = rdtscp();
-        const value_found = map.get(key);
-        const after = rdtscp();
-        metrics.lookup_miss.get(map.count()).add(after - before);
-
-        if (value_found != null) {
-            panic("map.get({}) == {?}", .{ key, value_found });
-        }
-    }
-
-    var values_found: [batch_size]?u64 = undefined;
     for (0..@divTrunc(count, batch_size)) |i| {
+        var values_found: [batch_size]?u64 = undefined;
+
         const before = rdtscp();
         for (keys[batch_size * i ..][0..batch_size], &values_found) |key, *value| {
             value.* = map.get(key);
@@ -238,6 +230,34 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
         const key_expected = keys[(batch_size * (i + 1)) % count];
         if (key != key_expected) {
             panic("Expected {}, found {}", .{ key_expected, key });
+        }
+    }
+
+    for (keys_missing) |key| {
+        const before = rdtscp();
+        const value_found = map.get(key);
+        const after = rdtscp();
+        metrics.lookup_miss.get(map.count()).add(after - before);
+
+        if (value_found != null) {
+            panic("map.get({}) == {?}", .{ key, value_found });
+        }
+    }
+
+    for (0..@divTrunc(count, batch_size)) |i| {
+        var values_found: [batch_size]?u64 = undefined;
+
+        const before = rdtscp();
+        for (keys_missing[batch_size * i ..][0..batch_size], &values_found) |key, *value| {
+            value.* = map.get(key);
+        }
+        const after = rdtscp();
+        metrics.lookup_miss_batch.get(map.count()).add(@divTrunc(after - before, batch_size));
+
+        for (keys_missing[batch_size * i ..][0..batch_size], values_found) |key, value_found| {
+            if (value_found != null) {
+                panic("map.get({}) == {?}", .{ key, value_found });
+            }
         }
     }
 }
