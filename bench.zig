@@ -83,6 +83,8 @@ const batch_size = 256;
 pub const XorShift64 = struct {
     a: u64 = 123456789,
 
+    pub const Key = u64;
+
     pub fn next(self: *XorShift64) u64 {
         var b = self.a;
         b ^= b << 13;
@@ -91,51 +93,105 @@ pub const XorShift64 = struct {
         self.a = b;
         return b;
     }
+
+    pub fn free(self: *XorShift64, key: u64) void {
+        _ = self;
+        _ = key;
+    }
 };
 
 pub const Ascending = struct {
     a: u64 = 0,
+
+    pub const Key = u64;
 
     pub fn next(self: *Ascending) u64 {
         const b = self.a;
         self.a += 1;
         return b;
     }
+
+    pub fn free(self: *Ascending, key: u64) void {
+        _ = self;
+        _ = key;
+    }
 };
 
 pub const Descending = struct {
     a: u64 = std.math.maxInt(u64),
+
+    pub const Key = u64;
 
     pub fn next(self: *Descending) u64 {
         const b = self.a;
         self.a -= 1;
         return b;
     }
+
+    pub fn free(self: *Descending, key: u64) void {
+        _ = self;
+        _ = key;
+    }
 };
 
-fn equal(a: u64, b: u64) bool {
+pub const RandomStrings = struct {
+    allocator: Allocator,
+    rng: XorShift64 = XorShift64{},
+
+    pub const Key = []const u8;
+
+    pub fn next(self: *RandomStrings) []const u8 {
+        const len = 32 + (self.rng.next() % 32);
+        const bytes = self.allocator.alloc(u8, len) catch unreachable;
+        for (bytes) |*byte| byte.* = @intCast(self.rng.next() % std.math.maxInt(u8));
+        return bytes;
+    }
+    pub fn free(self: *RandomStrings, key: []const u8) void {
+        self.allocator.free(key);
+    }
+};
+
+fn equal_u64(a: u64, b: u64) bool {
     return a == b;
 }
 
-fn less_than(a: u64, b: u64) bool {
+fn less_than_u64(a: u64, b: u64) bool {
     return a < b;
 }
 
-fn order(a: u64, b: u64) std.math.Order {
-    return std.math.order(a, b);
+fn equal_string(a: []const u8, b: []const u8) bool {
+    return std.mem.eql(u8, a, b);
 }
 
-const SipHashContext = struct {
-    pub fn hash(ctx: SipHashContext, key: u64) u64 {
+fn less_than_string(a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
+}
+
+const SipHashContextU64 = struct {
+    pub fn hash(ctx: SipHashContextU64, key: u64) u64 {
         _ = ctx;
         var hasher = std.crypto.auth.siphash.SipHash64(2, 4).init("0x128dad08f12307");
         hasher.update(std.mem.asBytes(&key));
         return hasher.finalInt();
     }
 
-    pub fn eql(ctx: SipHashContext, a: u64, b: u64) bool {
+    pub fn eql(ctx: SipHashContextU64, a: u64, b: u64) bool {
         _ = ctx;
         return a == b;
+    }
+};
+
+const SipHashContextString = struct {
+    pub fn hash(ctx: SipHashContextString, key: []const u8) u64 {
+        _ = ctx;
+        var hasher = std.crypto.auth.siphash.SipHash64(2, 4).init("0x128dad08f12307");
+        hasher.update(key);
+        return hasher.finalInt();
+    }
+
+    pub fn eql(ctx: SipHashContextString, a: []const u8, b: []const u8) bool {
+        _ = ctx;
+        return std.mem.eql(u8, a, b);
     }
 };
 
@@ -144,26 +200,40 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
 
     const count = @as(usize, 1) << @intCast(log_count);
 
-    const keys = try map.allocator.alloc(u64, count);
-    defer map.allocator.free(keys);
+    const Key = @TypeOf(rng.*).Key;
+
+    const keys = try map.allocator.alloc(Key, count);
     for (keys) |*key| key.* = rng.next();
+    defer {
+        for (keys) |key| rng.free(key);
+        map.allocator.free(keys);
+    }
 
-    const values = try map.allocator.alloc(u64, count);
-    defer map.allocator.free(values);
+    const values = try map.allocator.alloc(Key, count);
     for (values) |*value| value.* = rng.next();
+    defer {
+        for (values) |value| rng.free(value);
+        map.allocator.free(values);
+    }
 
-    const keys_missing = try map.allocator.alloc(u64, @max(batch_size, count));
-    defer map.allocator.free(keys_missing);
+    const keys_missing = try map.allocator.alloc(Key, @max(batch_size, count));
     for (keys_missing) |*key| key.* = rng.next();
+    defer {
+        for (keys_missing) |key| rng.free(key);
+        map.allocator.free(keys_missing);
+    }
 
-    const keys_hitting = try map.allocator.alloc(u64, @max(batch_size, count));
-    defer map.allocator.free(keys_hitting);
-    const values_hitting = try map.allocator.alloc(u64, @max(batch_size, count));
-    defer map.allocator.free(values_hitting);
+    const keys_hitting = try map.allocator.alloc(Key, @max(batch_size, count));
+    const values_hitting = try map.allocator.alloc(Key, @max(batch_size, count));
+    var permutation = XorShift64{};
     for (keys_hitting, values_hitting) |*key, *value| {
-        const i = rng.next() % count;
+        const i = permutation.next() % count;
         key.* = keys[i];
         value.* = values[i];
+    }
+    defer {
+        map.allocator.free(keys_hitting);
+        map.allocator.free(values_hitting);
     }
 
     for (keys, values) |key, value| {
@@ -230,10 +300,10 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
 
     for (0..@divTrunc(keys_hitting.len, batch_size)) |batch| {
         const keys_batch = keys_hitting[batch * batch_size ..][0..batch_size];
-        var values_found: [batch_size]?u64 = undefined;
+        var values_found: [batch_size]?Key = undefined;
 
         const before = rdtscp();
-        var key: u64 = keys_batch[0];
+        var key: Key = keys_batch[0];
         for (&values_found, 0..) |*value, i| {
             value.* = map.get(key);
             key = keys_batch[(i + 1) % keys_batch.len];
@@ -250,13 +320,18 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
 
     for (0..@divTrunc(keys_hitting.len, batch_size)) |batch| {
         const keys_batch = keys_hitting[batch * batch_size ..][0..batch_size];
-        var values_found: [batch_size]?u64 = undefined;
+        var values_found: [batch_size]?Key = undefined;
 
         const before = rdtscp();
-        var key: u64 = keys_batch[0];
+        var key: Key = keys_batch[0];
         for (&values_found, 0..) |*value, i| {
             value.* = map.get(key);
-            key = keys_batch[(i + value.*.?) % keys_batch.len];
+            const noise = switch (Key) {
+                u64 => value.*.?,
+                []const u8 => value.*.?.len,
+                else => unreachable,
+            };
+            key = keys_batch[(i + noise) % keys_batch.len];
         }
         const after = rdtscp();
         metrics.lookup_hit_chain.get(map.count()).add(@divTrunc(after - before, batch_size));
@@ -281,7 +356,7 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
 
     for (0..@max(1, @divTrunc(keys_missing.len, batch_size))) |batch| {
         const keys_batch = keys_missing[batch * batch_size ..][0..batch_size];
-        var values_found: [batch_size]?u64 = undefined;
+        var values_found: [batch_size]?Key = undefined;
 
         const before = rdtscp();
         var i: usize = 0;
@@ -363,12 +438,25 @@ pub fn main() !void {
     inline for (&.{
         //Ascending{},
         //Descending{},
+        RandomStrings{ .allocator = allocator },
         XorShift64{},
     }) |rng_init| {
-        //inline for (&.{11}) |key_count_max| {
-        //    var map = try btree.Map(u64, u64, key_count_max, order, debug).init(allocator);
-        //    try bench(&map, rng);
-        //}
+        const Key = @TypeOf(rng_init).Key;
+        const equal = switch (Key) {
+            u64 => equal_u64,
+            []const u8 => equal_string,
+            else => unreachable,
+        };
+        const less_than = switch (Key) {
+            u64 => less_than_u64,
+            []const u8 => less_than_string,
+            else => unreachable,
+        };
+        const SipHashContext = switch (Key) {
+            u64 => SipHashContextU64,
+            []const u8 => SipHashContextString,
+            else => unreachable,
+        };
         inline for (&.{
             11,
             //15,
@@ -403,7 +491,7 @@ pub fn main() !void {
                             //32,
                         }) |search_dynamic_cutoff| {
                             if (branch_search != .dynamic and leaf_search != .dynamic and search_dynamic_cutoff > 1) continue;
-                            const Map = bptree.Map(u64, u64, equal, less_than, .{
+                            const Map = bptree.Map(Key, Key, equal, less_than, .{
                                 .branch_key_count_max = branch_key_count_max,
                                 .leaf_key_count_max = leaf_key_count_max,
                                 .branch_search = branch_search,
@@ -424,16 +512,20 @@ pub fn main() !void {
             //63,
             //127,
         }) |key_count_max| {
-            const Map = btree.Map(u64, u64, equal, less_than, key_count_max, debug);
+            const Map = btree.Map(Key, Key, equal, less_than, key_count_max, debug);
             try bench(allocator, Map, rng_init, log_count_max);
         }
         if (!debug) {
             {
-                const Map = std.HashMap(u64, u64, SipHashContext, std.hash_map.default_max_load_percentage);
+                const Map = std.HashMap(Key, Key, SipHashContext, std.hash_map.default_max_load_percentage);
                 try bench(allocator, Map, rng_init, log_count_max);
             }
             {
-                const Map = std.AutoHashMap(u64, u64);
+                const Map = switch (Key) {
+                    u64 => std.AutoHashMap(Key, Key),
+                    []const u8 => std.StringHashMap(Key),
+                    else => unreachable,
+                };
                 try bench(allocator, Map, rng_init, log_count_max);
             }
         }

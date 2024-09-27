@@ -35,13 +35,13 @@ pub fn Map(
 
         const ChildPtr = *align(8) void;
 
-        const Branch = extern struct {
+        const Branch = struct {
             key_count: u8,
             keys: [config.branch_key_count_max]Key,
             children: [config.branch_key_count_max + 1]ChildPtr,
         };
 
-        const Leaf = extern struct {
+        const Leaf = struct {
             key_count: u8,
             sorted: switch (config.leaf_search) {
                 .linear_lazy => bool,

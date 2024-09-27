@@ -22,14 +22,14 @@ pub fn Map(
 
         const ChildPtr = *align(8) void;
 
-        const Branch = extern struct {
+        const Branch = struct {
             key_count: u8,
             keys: [key_count_max]Key,
             children: [key_count_max + 1]ChildPtr,
             values: [key_count_max]Value,
         };
 
-        const Leaf = extern struct {
+        const Leaf = struct {
             key_count: u8,
             keys: [key_count_max]Key,
             values: [key_count_max]Value,
