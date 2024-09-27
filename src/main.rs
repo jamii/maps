@@ -55,6 +55,7 @@ impl Bins {
 struct Metrics {
     insert_miss: Bins,
     insert_hit: Bins,
+    lookup_all: Bins,
     lookup_miss: Bins,
     lookup_hit: Bins,
     free: Bins,
@@ -65,6 +66,7 @@ impl Metrics {
         Metrics {
             insert_miss: Bins::new(log_count),
             insert_hit: Bins::new(log_count),
+            lookup_all: Bins::new(log_count),
             lookup_miss: Bins::new(log_count),
             lookup_hit: Bins::new(log_count),
             free: Bins::new(log_count),
@@ -126,6 +128,21 @@ macro_rules! bench_one {
             $map.insert(*k, *v);
             let after = rdtscp();
             $metrics.insert_hit.get($map.len()).add(after - before);
+        }
+
+        {
+            let before = rdtscp();
+            for k in &keys {
+                let v = $map.get(k);
+                if v.is_none() {
+                    panic!("Oh no!")
+                }
+            }
+            let after = rdtscp();
+            $metrics
+                .lookup_all
+                .get($map.len())
+                .add((after - before) / (count as u64));
         }
 
         for k in &keys {
@@ -197,6 +214,22 @@ macro_rules! bench {
             print!(" {:>8}", bin.max);
         }
         println!("");
+        println!("lookup_all");
+        print!("min =");
+        for bin in &metrics.lookup_all.bins {
+            print!(" {:>8}", bin.min);
+        }
+        println!("");
+        print!("avg =");
+        for bin in &metrics.lookup_all.bins {
+            print!(" {:>8}", bin.mean());
+        }
+        println!("");
+        print!("max =");
+        for bin in &metrics.lookup_all.bins {
+            print!(" {:>8}", bin.max);
+        }
+        println!("");
         println!("lookup_miss");
         print!("min =");
         for bin in &metrics.lookup_miss.bins {
@@ -249,7 +282,7 @@ macro_rules! bench {
 }
 
 fn main() {
-    let log_count = 20;
+    let log_count = 17;
 
     println!();
     println!("BTreeMap:");

@@ -55,6 +55,7 @@ const Bins = struct {
 const Metrics = struct {
     insert_miss: Bins,
     insert_hit: Bins,
+    lookup_all: Bins,
     lookup_miss: Bins,
     lookup_miss_batch: Bins,
     lookup_hit: Bins,
@@ -66,6 +67,7 @@ const Metrics = struct {
         return .{
             .insert_miss = try Bins.init(allocator, log_count),
             .insert_hit = try Bins.init(allocator, log_count),
+            .lookup_all = try Bins.init(allocator, log_count),
             .lookup_miss = try Bins.init(allocator, log_count),
             .lookup_miss_batch = try Bins.init(allocator, log_count),
             .lookup_hit = try Bins.init(allocator, log_count),
@@ -143,12 +145,26 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
     const count = @as(usize, 1) << @intCast(log_count);
 
     const keys = try map.allocator.alloc(u64, count);
-    const keys_missing = try map.allocator.alloc(u64, count);
-    const values = try map.allocator.alloc(u64, count);
-
+    defer map.allocator.free(keys);
     for (keys) |*key| key.* = rng.next();
+
+    const values = try map.allocator.alloc(u64, count);
+    defer map.allocator.free(values);
+    for (values) |*value| value.* = rng.next();
+
+    const keys_missing = try map.allocator.alloc(u64, @max(batch_size, count));
+    defer map.allocator.free(keys_missing);
     for (keys_missing) |*key| key.* = rng.next();
-    for (values, 0..) |*value, i| value.* = keys[(i + 1) % count];
+
+    const keys_hitting = try map.allocator.alloc(u64, @max(batch_size, count));
+    defer map.allocator.free(keys_hitting);
+    const values_hitting = try map.allocator.alloc(u64, @max(batch_size, count));
+    defer map.allocator.free(values_hitting);
+    for (keys_hitting, values_hitting) |*key, *value| {
+        const i = rng.next() % count;
+        key.* = keys[i];
+        value.* = values[i];
+    }
 
     for (keys, values) |key, value| {
         if (debug) {
@@ -189,47 +205,66 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
         panic("Reinserted {} keys", .{count_after - count_before});
     }
 
-    for (keys, values) |key, value| {
+    {
+        const before = rdtscp();
+        for (keys) |key| {
+            const value_found = map.get(key);
+            if (value_found == null) {
+                panic("Value not found", .{});
+            }
+        }
+        const after = rdtscp();
+        metrics.lookup_all.get(map.count()).add(@divTrunc(after - before, count));
+    }
+
+    for (keys_hitting) |key| {
         const before = rdtscp();
         const value_found = map.get(key);
         const after = rdtscp();
         metrics.lookup_hit.get(map.count()).add(after - before);
 
-        if (value_found == null or value_found.? != value) {
-            panic("map.get({}) == {?}", .{ key, value_found });
+        if (value_found == null) {
+            panic("Value not found", .{});
         }
     }
 
-    for (0..@divTrunc(count, batch_size)) |i| {
+    for (0..@divTrunc(keys_hitting.len, batch_size)) |batch| {
+        const keys_batch = keys_hitting[batch * batch_size ..][0..batch_size];
         var values_found: [batch_size]?u64 = undefined;
 
         const before = rdtscp();
-        for (keys[batch_size * i ..][0..batch_size], &values_found) |key, *value| {
+        var key: u64 = keys_batch[0];
+        for (&values_found, 0..) |*value, i| {
             value.* = map.get(key);
+            key = keys_batch[(i + 1) % keys_batch.len];
         }
         const after = rdtscp();
         metrics.lookup_hit_batch.get(map.count()).add(@divTrunc(after - before, batch_size));
 
-        for (keys[batch_size * i ..][0..batch_size], values[batch_size * i ..][0..batch_size], values_found) |key, value, value_found| {
-            if (value_found == null or value_found.? != value) {
-                panic("map.get({}) == {?}", .{ key, value_found });
+        for (values_found) |value_found| {
+            if (value_found == null) {
+                panic("Value not found", .{});
             }
         }
     }
 
-    for (0..@divTrunc(count, batch_size)) |i| {
-        var key = keys[batch_size * i];
+    for (0..@divTrunc(keys_hitting.len, batch_size)) |batch| {
+        const keys_batch = keys_hitting[batch * batch_size ..][0..batch_size];
+        var values_found: [batch_size]?u64 = undefined;
 
         const before = rdtscp();
-        for (0..batch_size) |_| {
-            key = map.get(key).?;
+        var key: u64 = keys_batch[0];
+        for (&values_found, 0..) |*value, i| {
+            value.* = map.get(key);
+            key = keys_batch[(i + value.*.?) % keys_batch.len];
         }
         const after = rdtscp();
         metrics.lookup_hit_chain.get(map.count()).add(@divTrunc(after - before, batch_size));
 
-        const key_expected = keys[(batch_size * (i + 1)) % count];
-        if (key != key_expected) {
-            panic("Expected {}, found {}", .{ key_expected, key });
+        for (values_found) |value_found| {
+            if (value_found == null) {
+                panic("Value not found", .{});
+            }
         }
     }
 
@@ -240,38 +275,41 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
         metrics.lookup_miss.get(map.count()).add(after - before);
 
         if (value_found != null) {
-            panic("map.get({}) == {?}", .{ key, value_found });
+            panic("Value found", .{});
         }
     }
 
-    for (0..@divTrunc(count, batch_size)) |i| {
+    for (0..@max(1, @divTrunc(keys_missing.len, batch_size))) |batch| {
+        const keys_batch = keys_missing[batch * batch_size ..][0..batch_size];
         var values_found: [batch_size]?u64 = undefined;
 
         const before = rdtscp();
-        for (keys_missing[batch_size * i ..][0..batch_size], &values_found) |key, *value| {
-            value.* = map.get(key);
+        var i: usize = 0;
+        for (&values_found) |*value| {
+            value.* = map.get(keys_batch[i]);
+            i += 1;
         }
         const after = rdtscp();
         metrics.lookup_miss_batch.get(map.count()).add(@divTrunc(after - before, batch_size));
 
-        for (keys_missing[batch_size * i ..][0..batch_size], values_found) |key, value_found| {
+        for (values_found) |value_found| {
             if (value_found != null) {
-                panic("map.get({}) == {?}", .{ key, value_found });
+                panic("Value found", .{});
             }
         }
     }
 }
 
-fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count: usize) !void {
+fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count_max: usize) !void {
     std.debug.print("{s} {s}\n", .{ @typeName(Map), @typeName(@TypeOf(rng_init)) });
-    const metrics = try Metrics.init(allocator, log_count);
+    const metrics = try Metrics.init(allocator, log_count_max);
     var rng = rng_init;
-    for (0..log_count) |log_count_one| {
+    for (0..log_count_max) |log_count| {
         // Try to get roughly `1 << log_count` samples per bin.
-        for (0..@as(usize, 1) << @intCast(log_count - log_count_one)) |_| {
+        for (0..@as(usize, 1) << @intCast(log_count_max - log_count)) |_| {
             const map_or_err = Map.init(allocator);
             var map = if (@typeInfo(@TypeOf(map_or_err)) == .ErrorUnion) try map_or_err else map_or_err;
-            try bench_one(&map, &rng, log_count_one, metrics);
+            try bench_one(&map, &rng, log_count, metrics);
 
             const before = rdtscp();
             map.deinit();
@@ -279,6 +317,12 @@ fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count:
             metrics.free.get(map.count()).add(after - before);
         }
     }
+
+    std.debug.print("len =", .{});
+    for (0..log_count_max) |log_count| {
+        std.debug.print(" {: >8}", .{log_count});
+    }
+    std.debug.print("\n", .{});
     inline for (@typeInfo(Metrics).Struct.fields) |field| {
         const bins = @field(metrics, field.name);
         std.debug.print("{s}:\n", .{field.name});
@@ -315,7 +359,7 @@ fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count:
 
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
-    const log_count = 20;
+    const log_count_max = 17;
     inline for (&.{
         //Ascending{},
         //Descending{},
@@ -367,7 +411,7 @@ pub fn main() !void {
                                 .search_dynamic_cutoff = search_dynamic_cutoff,
                                 .debug = debug,
                             });
-                            try bench(allocator, Map, rng_init, log_count);
+                            try bench(allocator, Map, rng_init, log_count_max);
                         }
                     }
                 }
@@ -381,16 +425,16 @@ pub fn main() !void {
             //127,
         }) |key_count_max| {
             const Map = btree.Map(u64, u64, equal, less_than, key_count_max, debug);
-            try bench(allocator, Map, rng_init, log_count);
+            try bench(allocator, Map, rng_init, log_count_max);
         }
         if (!debug) {
             {
                 const Map = std.HashMap(u64, u64, SipHashContext, std.hash_map.default_max_load_percentage);
-                try bench(allocator, Map, rng_init, log_count);
+                try bench(allocator, Map, rng_init, log_count_max);
             }
             {
                 const Map = std.AutoHashMap(u64, u64);
-                try bench(allocator, Map, rng_init, log_count);
+                try bench(allocator, Map, rng_init, log_count_max);
             }
         }
         std.debug.print("\n", .{});
