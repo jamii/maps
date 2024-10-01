@@ -333,8 +333,10 @@ pub fn Map(
             while (length > 1) {
                 const half = length / 2;
                 const mid = offset + half;
-                const next_offsets = [_]usize{ offset, mid };
-                offset = next_offsets[@intFromBool(less_than(keys[mid], search_key))];
+                if (less_than(keys[mid], search_key)) {
+                    @branchHint(.unpredictable);
+                    offset = mid;
+                }
                 length -= half;
             }
             offset += @intFromBool(less_than(keys[offset], search_key));
