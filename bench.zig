@@ -141,12 +141,30 @@ pub const RandomStrings = struct {
     pub const Key = []const u8;
 
     pub fn next(self: *RandomStrings) []const u8 {
-        const len = 32 + (self.rng.next() % 32);
+        const len = 32;
         const bytes = self.allocator.alloc(u8, len) catch unreachable;
         for (bytes) |*byte| byte.* = @intCast(self.rng.next() % std.math.maxInt(u8));
         return bytes;
     }
     pub fn free(self: *RandomStrings, key: []const u8) void {
+        self.allocator.free(key);
+    }
+};
+
+pub const RandomishStrings = struct {
+    allocator: Allocator,
+    rng: XorShift64 = XorShift64{},
+
+    pub const Key = []const u8;
+
+    pub fn next(self: *RandomishStrings) []const u8 {
+        const len = 32;
+        const bytes = self.allocator.alloc(u8, len) catch unreachable;
+        for (bytes[0..16]) |*byte| byte.* = 'x';
+        for (bytes[16..]) |*byte| byte.* = @intCast(self.rng.next() % std.math.maxInt(u8));
+        return bytes;
+    }
+    pub fn free(self: *RandomishStrings, key: []const u8) void {
         self.allocator.free(key);
     }
 };
@@ -439,7 +457,8 @@ pub fn main() !void {
         //Ascending{},
         //Descending{},
         //RandomStrings{ .allocator = allocator },
-        XorShift64{},
+        RandomishStrings{ .allocator = allocator },
+        //XorShift64{},
     }) |rng_init| {
         const Key = @TypeOf(rng_init).Key;
         const equal = switch (Key) {
