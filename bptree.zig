@@ -33,7 +33,7 @@ pub fn Map(
         _count: usize,
         depth: usize,
 
-        const ChildPtr = *align(8) void;
+        const ChildPtr = *void;
 
         const Branch = struct {
             key_count: u8,
@@ -91,13 +91,13 @@ pub fn Map(
 
         pub fn deinitNode(self: *Self, depth: usize, child_ptr: ChildPtr) void {
             if (depth < self.depth) {
-                const branch = @as(*Branch, @ptrCast(child_ptr));
+                const branch = @as(*Branch, @alignCast(@ptrCast(child_ptr)));
                 for (branch.children[0 .. branch.key_count + 1]) |child| {
                     self.deinitNode(depth + 1, child);
                 }
                 self.allocator.destroy(branch);
             } else {
-                const leaf = @as(*Leaf, @ptrCast(child_ptr));
+                const leaf = @as(*Leaf, @alignCast(@ptrCast(child_ptr)));
                 self.allocator.destroy(leaf);
             }
         }
@@ -109,13 +109,13 @@ pub fn Map(
         fn printNode(self: *Self, writer: anytype, depth: usize, child_ptr: ChildPtr) @TypeOf(writer.print("", .{})) {
             try writer.writeByteNTimes(' ', depth * 2);
             if (depth < self.depth) {
-                const branch = @as(*Branch, @ptrCast(child_ptr));
+                const branch = @as(*Branch, @alignCast(@ptrCast(child_ptr)));
                 try writer.print("{any}\n", .{branch.keys[0..branch.key_count]});
                 for (branch.children[0 .. branch.key_count + 1]) |child| {
                     try self.printNode(writer, depth + 1, child);
                 }
             } else {
-                const leaf = @as(*Leaf, @ptrCast(child_ptr));
+                const leaf = @as(*Leaf, @alignCast(@ptrCast(child_ptr)));
                 try writer.print("{any} = {any}\n", .{ leaf.keys[0..leaf.key_count], leaf.values[0..leaf.key_count] });
             }
         }
@@ -126,7 +126,7 @@ pub fn Map(
 
         fn validateNode(self: *Self, depth: usize, lower_bound: ?Key, upper_bound: ?Key, child_ptr: ChildPtr) void {
             if (depth < self.depth) {
-                const branch = @as(*Branch, @ptrCast(child_ptr));
+                const branch = @as(*Branch, @alignCast(@ptrCast(child_ptr)));
                 if (depth > 0) assert(branch.key_count >= branch_mid_ix);
                 for (0..branch.key_count - 1) |ix| {
                     assert(less_than(branch.keys[ix], branch.keys[ix + 1]));
@@ -141,7 +141,7 @@ pub fn Map(
                     self.validateNode(depth + 1, lower_bound_child, upper_bound_child, branch.children[ix]);
                 }
             } else {
-                const leaf = @as(*Leaf, @ptrCast(child_ptr));
+                const leaf = @as(*Leaf, @alignCast(@ptrCast(child_ptr)));
                 if (self.depth > 0) assert(leaf.key_count >= leaf_mid_ix);
                 if (leaf.key_count == 0) return;
                 if (config.leaf_search != .linear_lazy) {
@@ -167,7 +167,7 @@ pub fn Map(
 
             // Descend through branches
             for (0..self.depth) |depth| {
-                const branch = @as(*Branch, @ptrCast(child_ptr));
+                const branch = @as(*Branch, @alignCast(@ptrCast(child_ptr)));
                 const search_ix = searchBranch(branch.keys[0..branch.key_count], key);
                 parents[depth] = branch;
                 parent_search_ixes[depth] = search_ix;
@@ -175,7 +175,7 @@ pub fn Map(
             }
 
             // Search in leaf
-            const leaf = @as(*Leaf, @ptrCast(child_ptr));
+            const leaf = @as(*Leaf, @alignCast(@ptrCast(child_ptr)));
             const search_ix = searchLeaf(leaf.keys[0..leaf.key_count], key);
 
             // If found a matching key, replace value.
@@ -246,8 +246,8 @@ pub fn Map(
             }
 
             // Insert leaf_new into parent.
-            var child = @as(ChildPtr, @ptrCast(leaf));
-            var child_new = @as(ChildPtr, @ptrCast(leaf_new));
+            var child = @as(ChildPtr, @alignCast(@ptrCast(leaf)));
+            var child_new = @as(ChildPtr, @alignCast(@ptrCast(leaf_new)));
             up: for (0..self.depth) |height| {
                 const depth = self.depth - height - 1;
                 const parent = parents[depth];
@@ -298,11 +298,11 @@ pub fn Map(
         pub fn get(self: *Self, key: Key) ?Value {
             var child_ptr = self.root;
             for (0..self.depth) |_| {
-                const branch = @as(*Branch, @ptrCast(child_ptr));
+                const branch = @as(*Branch, @alignCast(@ptrCast(child_ptr)));
                 const search_ix = searchBranch(branch.keys[0..branch.key_count], key);
                 child_ptr = branch.children[search_ix];
             }
-            const leaf = @as(*Leaf, @ptrCast(child_ptr));
+            const leaf = @as(*Leaf, @alignCast(@ptrCast(child_ptr)));
             const search_ix = searchLeaf(leaf.keys[0..leaf.key_count], key);
             if (search_ix < leaf.key_count and
                 (config.leaf_search == .linear_lazy or

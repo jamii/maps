@@ -51,6 +51,7 @@ pkgs.mkShell rec {
     nativeBuildInputs = [
         zig
         pkgs.cargo
+        pkgs.wasmtime
         mlc
     ];
     buildInputs = [

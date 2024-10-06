@@ -9,15 +9,23 @@ const bptree = @import("bptree.zig");
 const debug = false;
 
 inline fn rdtscp() u64 {
-    var hi: u64 = undefined;
-    var low: u64 = undefined;
-    asm volatile ("rdtscp"
-        : [low] "={eax}" (low),
-          [hi] "={edx}" (hi),
-        :
-        : "ecx"
-    );
-    return (@as(u64, hi) << 32) | @as(u64, low);
+    switch (@import("builtin").target.cpu.arch) {
+        .x86_64 => {
+            var hi: u64 = undefined;
+            var low: u64 = undefined;
+            asm volatile ("rdtscp"
+                : [low] "={eax}" (low),
+                  [hi] "={edx}" (hi),
+                :
+                : "ecx"
+            );
+            return (@as(u64, hi) << 32) | @as(u64, low);
+        },
+        .wasm32 => {
+            return (std.time.Instant.now() catch unreachable).timestamp;
+        },
+        else => |arch| @compileError("Unsupported arch " ++ @tagName(arch)),
+    }
 }
 
 const Bin = struct {
@@ -246,8 +254,8 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
     var permutation = XorShift64{};
     for (keys_hitting, values_hitting) |*key, *value| {
         const i = permutation.next() % count;
-        key.* = keys[i];
-        value.* = values[i];
+        key.* = keys[@intCast(i)];
+        value.* = values[@intCast(i)];
     }
     defer {
         map.allocator.free(keys_hitting);
@@ -324,7 +332,7 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
         var key: Key = keys_batch[0];
         for (&values_found, 0..) |*value, i| {
             value.* = map.get(key);
-            key = keys_batch[(i + 1) % keys_batch.len];
+            key = keys_batch[@intCast((i + 1) % keys_batch.len)];
         }
         const after = rdtscp();
         metrics.lookup_hit_batch.get(map.count()).add(@divTrunc(after - before, batch_size));
@@ -349,7 +357,7 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
                 []const u8 => value.*.?.len,
                 else => unreachable,
             };
-            key = keys_batch[(i + noise) % keys_batch.len];
+            key = keys_batch[@intCast((i + noise) % keys_batch.len)];
         }
         const after = rdtscp();
         metrics.lookup_hit_chain.get(map.count()).add(@divTrunc(after - before, batch_size));
@@ -451,13 +459,17 @@ fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count_
 }
 
 pub fn main() !void {
-    const allocator = std.heap.c_allocator;
+    const allocator = switch (@import("builtin").target.cpu.arch) {
+        .x86_64 => std.heap.c_allocator,
+        .wasm32 => std.heap.wasm_allocator,
+        else => |arch| @compileError("Unsupported arch " ++ @tagName(arch)),
+    };
     const log_count_max = 17;
     inline for (&.{
         //Ascending{},
         //Descending{},
-        //RandomStrings{ .allocator = allocator },
-        RandomishStrings{ .allocator = allocator },
+        RandomStrings{ .allocator = allocator },
+        //RandomishStrings{ .allocator = allocator },
         //XorShift64{},
     }) |rng_init| {
         const Key = @TypeOf(rng_init).Key;
