@@ -55,10 +55,10 @@ const Bins = struct {
 const Metrics = struct {
     insert_miss: Bins,
     insert_hit: Bins,
-    lookup_all: Bins,
     lookup_miss: Bins,
     lookup_miss_batch: Bins,
-    lookup_hit: Bins,
+    lookup_hit_all: Bins,
+    lookup_hit_one: Bins,
     lookup_hit_batch: Bins,
     lookup_hit_chain: Bins,
     free: Bins,
@@ -67,10 +67,10 @@ const Metrics = struct {
         return .{
             .insert_miss = try Bins.init(allocator, log_count),
             .insert_hit = try Bins.init(allocator, log_count),
-            .lookup_all = try Bins.init(allocator, log_count),
             .lookup_miss = try Bins.init(allocator, log_count),
             .lookup_miss_batch = try Bins.init(allocator, log_count),
-            .lookup_hit = try Bins.init(allocator, log_count),
+            .lookup_hit_all = try Bins.init(allocator, log_count),
+            .lookup_hit_one = try Bins.init(allocator, log_count),
             .lookup_hit_batch = try Bins.init(allocator, log_count),
             .lookup_hit_chain = try Bins.init(allocator, log_count),
             .free = try Bins.init(allocator, log_count),
@@ -284,14 +284,14 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
             }
         }
         const after = rdtscp();
-        metrics.lookup_all.get(map.count()).add(@divTrunc(after - before, count));
+        metrics.lookup_hit_all.get(map.count()).add(@divTrunc(after - before, count));
     }
 
     for (keys_hitting) |key| {
         const before = rdtscp();
         const value_found = map.get(key);
         const after = rdtscp();
-        metrics.lookup_hit.get(map.count()).add(after - before);
+        metrics.lookup_hit_one.get(map.count()).add(after - before);
 
         if (value_found == null) {
             panic("Value not found", .{});
@@ -434,7 +434,7 @@ fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count_
 
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
-    const log_count_max = 21;
+    const log_count_max = 17;
     inline for (&.{
         //Ascending{},
         //Descending{},
@@ -452,11 +452,11 @@ pub fn main() !void {
             []const u8 => less_than_string,
             else => unreachable,
         };
-        //const SipHashContext = switch (Key) {
-        //    u64 => SipHashContextU64,
-        //    []const u8 => SipHashContextString,
-        //    else => unreachable,
-        //};
+        const SipHashContext = switch (Key) {
+            u64 => SipHashContextU64,
+            []const u8 => SipHashContextString,
+            else => unreachable,
+        };
         inline for (&.{
             //11,
             //15,
@@ -473,8 +473,8 @@ pub fn main() !void {
             }) |leaf_key_count_max| {
                 inline for (&.{
                     //.dynamic,
-                    //.linear,
-                    .binary,
+                    .linear,
+                    //.binary,
                 }) |branch_search| {
                     inline for (&.{
                         //.dynamic,
@@ -506,30 +506,30 @@ pub fn main() !void {
                 }
             }
         }
-        inline for (&.{
-            //11,
-            //15,
-            //31,
-            //63,
-            //127,
-        }) |key_count_max| {
-            const Map = btree.Map(Key, Key, equal, less_than, key_count_max, debug);
-            try bench(allocator, Map, rng_init, log_count_max);
-        }
-        //if (!debug) {
-        //    {
-        //        const Map = std.HashMap(Key, Key, SipHashContext, std.hash_map.default_max_load_percentage);
-        //        try bench(allocator, Map, rng_init, log_count_max);
-        //    }
-        //    {
-        //        const Map = switch (Key) {
-        //            u64 => std.AutoHashMap(Key, Key),
-        //            []const u8 => std.StringHashMap(Key),
-        //            else => unreachable,
-        //        };
-        //        try bench(allocator, Map, rng_init, log_count_max);
-        //    }
+        //inline for (&.{
+        //    //11,
+        //    //15,
+        //    //31,
+        //    //63,
+        //    //127,
+        //}) |key_count_max| {
+        //    const Map = btree.Map(Key, Key, equal, less_than, key_count_max, debug);
+        //    try bench(allocator, Map, rng_init, log_count_max);
         //}
+        if (!debug) {
+            {
+                const Map = std.HashMap(Key, Key, SipHashContext, std.hash_map.default_max_load_percentage);
+                try bench(allocator, Map, rng_init, log_count_max);
+            }
+            {
+                const Map = switch (Key) {
+                    u64 => std.AutoHashMap(Key, Key),
+                    []const u8 => std.StringHashMap(Key),
+                    else => unreachable,
+                };
+                try bench(allocator, Map, rng_init, log_count_max);
+            }
+        }
         std.debug.print("\n", .{});
     }
 }

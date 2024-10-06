@@ -55,9 +55,9 @@ impl Bins {
 struct Metrics {
     insert_miss: Bins,
     insert_hit: Bins,
-    lookup_all: Bins,
+    lookup_hit_all: Bins,
     lookup_miss: Bins,
-    lookup_hit: Bins,
+    lookup_hit_one: Bins,
     free: Bins,
 }
 
@@ -66,9 +66,9 @@ impl Metrics {
         Metrics {
             insert_miss: Bins::new(log_count),
             insert_hit: Bins::new(log_count),
-            lookup_all: Bins::new(log_count),
+            lookup_hit_all: Bins::new(log_count),
             lookup_miss: Bins::new(log_count),
-            lookup_hit: Bins::new(log_count),
+            lookup_hit_one: Bins::new(log_count),
             free: Bins::new(log_count),
         }
     }
@@ -140,7 +140,7 @@ macro_rules! bench_one {
             }
             let after = rdtscp();
             $metrics
-                .lookup_all
+                .lookup_hit_all
                 .get($map.len())
                 .add((after - before) / (count as u64));
         }
@@ -149,7 +149,7 @@ macro_rules! bench_one {
             let before = rdtscp();
             let v = $map.get(k);
             let after = rdtscp();
-            $metrics.lookup_hit.get($map.len()).add(after - before);
+            $metrics.lookup_hit_one.get($map.len()).add(after - before);
             if v.is_none() {
                 panic!("Oh no!")
             }
@@ -214,19 +214,19 @@ macro_rules! bench {
             print!(" {:>8}", bin.max);
         }
         println!("");
-        println!("lookup_all");
+        println!("lookup_hit_all");
         print!("min =");
-        for bin in &metrics.lookup_all.bins {
+        for bin in &metrics.lookup_hit_all.bins {
             print!(" {:>8}", bin.min);
         }
         println!("");
         print!("avg =");
-        for bin in &metrics.lookup_all.bins {
+        for bin in &metrics.lookup_hit_all.bins {
             print!(" {:>8}", bin.mean());
         }
         println!("");
         print!("max =");
-        for bin in &metrics.lookup_all.bins {
+        for bin in &metrics.lookup_hit_all.bins {
             print!(" {:>8}", bin.max);
         }
         println!("");
@@ -246,19 +246,19 @@ macro_rules! bench {
             print!(" {:>8}", bin.max);
         }
         println!("");
-        println!("lookup_hit");
+        println!("lookup_hit_one");
         print!("min =");
-        for bin in &metrics.lookup_hit.bins {
+        for bin in &metrics.lookup_hit_one.bins {
             print!(" {:>8}", bin.min);
         }
         println!("");
         print!("avg =");
-        for bin in &metrics.lookup_hit.bins {
+        for bin in &metrics.lookup_hit_one.bins {
             print!(" {:>8}", bin.mean());
         }
         println!("");
         print!("max =");
-        for bin in &metrics.lookup_hit.bins {
+        for bin in &metrics.lookup_hit_one.bins {
             print!(" {:>8}", bin.max);
         }
         println!("");
@@ -285,12 +285,16 @@ fn main() {
     let log_count = 17;
 
     println!();
+
     println!("BTreeMap:");
     let mut rng = XorShift64::new();
     bench!(std::collections::BTreeMap::<u64, u64>, rng, log_count);
 
     println!();
+
     println!("HashMap (sip):");
     let mut rng = XorShift64::new();
     bench!(std::collections::HashMap::<u64, u64>, rng, log_count);
+
+    println!();
 }
