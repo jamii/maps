@@ -401,11 +401,11 @@ fn bench_one(map: anytype, rng: anytype, log_count: usize, metrics: Metrics) !vo
     }
 }
 
-fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count_max: usize) !void {
+fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count_min: usize, log_count_max: usize) !void {
     std.debug.print("{s} {s}\n", .{ @typeName(Map), @typeName(@TypeOf(rng_init)) });
     const metrics = try Metrics.init(allocator, log_count_max);
     var rng = rng_init;
-    for (0..log_count_max) |log_count| {
+    for (log_count_min..log_count_max) |log_count| {
         // Try to get roughly `1 << log_count` samples per bin.
         for (0..@as(usize, 1) << @intCast(log_count_max - log_count)) |_| {
             const map_or_err = Map.init(allocator);
@@ -420,7 +420,7 @@ fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count_
     }
 
     std.debug.print("len =", .{});
-    for (0..log_count_max) |log_count| {
+    for (log_count_min..log_count_max) |log_count| {
         std.debug.print(" {: >8}", .{log_count});
     }
     std.debug.print("\n", .{});
@@ -428,7 +428,7 @@ fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count_
         const bins = @field(metrics, field.name);
         std.debug.print("{s}:\n", .{field.name});
         std.debug.print("min =", .{});
-        for (bins.bins) |bin| {
+        for (bins.bins[log_count_min..log_count_max]) |bin| {
             if (bin.count == 0) {
                 std.debug.print(" {s: >8}", .{"-"});
             } else {
@@ -437,7 +437,7 @@ fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count_
         }
         std.debug.print("\n", .{});
         std.debug.print("avg =", .{});
-        for (bins.bins) |bin| {
+        for (bins.bins[log_count_min..log_count_max]) |bin| {
             if (bin.count == 0) {
                 std.debug.print(" {s: >8}", .{"-"});
             } else {
@@ -446,7 +446,7 @@ fn bench(allocator: Allocator, comptime Map: type, rng_init: anytype, log_count_
         }
         std.debug.print("\n", .{});
         std.debug.print("max =", .{});
-        for (bins.bins) |bin| {
+        for (bins.bins[log_count_min..log_count_max]) |bin| {
             if (bin.count == 0) {
                 std.debug.print(" {s: >8}", .{"-"});
             } else {
@@ -464,13 +464,14 @@ pub fn main() !void {
         .wasm32 => std.heap.wasm_allocator,
         else => |arch| @compileError("Unsupported arch " ++ @tagName(arch)),
     };
-    const log_count_max = 17;
+    const log_count_min = 22;
+    const log_count_max = 25;
     inline for (&.{
         //Ascending{},
         //Descending{},
-        RandomStrings{ .allocator = allocator },
+        //RandomStrings{ .allocator = allocator },
         //RandomishStrings{ .allocator = allocator },
-        //XorShift64{},
+        XorShift64{},
     }) |rng_init| {
         const Key = @TypeOf(rng_init).Key;
         const equal = switch (Key) {
@@ -489,9 +490,9 @@ pub fn main() !void {
             else => unreachable,
         };
         inline for (&.{
-            11,
-            15,
-            20,
+            //11,
+            //15,
+            //20,
             31,
             //63,
             //127,
@@ -532,7 +533,7 @@ pub fn main() !void {
                                 .search_dynamic_cutoff = search_dynamic_cutoff,
                                 .debug = debug,
                             });
-                            try bench(allocator, Map, rng_init, log_count_max);
+                            try bench(allocator, Map, rng_init, log_count_min, log_count_max);
                         }
                     }
                 }
@@ -546,12 +547,12 @@ pub fn main() !void {
         //    //127,
         //}) |key_count_max| {
         //    const Map = btree.Map(Key, Key, equal, less_than, key_count_max, debug);
-        //    try bench(allocator, Map, rng_init, log_count_max);
+        //    try bench(allocator, Map, rng_init, log_count_min, log_count_max);
         //}
         if (!debug) {
             {
                 const Map = std.HashMap(Key, Key, SipHashContext, std.hash_map.default_max_load_percentage);
-                try bench(allocator, Map, rng_init, log_count_max);
+                try bench(allocator, Map, rng_init, log_count_min, log_count_max);
             }
             {
                 const Map = switch (Key) {
@@ -559,7 +560,7 @@ pub fn main() !void {
                     []const u8 => std.StringHashMap(Key),
                     else => unreachable,
                 };
-                try bench(allocator, Map, rng_init, log_count_max);
+                try bench(allocator, Map, rng_init, log_count_min, log_count_max);
             }
         }
         std.debug.print("\n", .{});
