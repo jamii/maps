@@ -489,8 +489,9 @@ pub fn main() !void {
             else => unreachable,
         };
         inline for (&.{
-            //11,
-            //15,
+            11,
+            15,
+            20,
             31,
             //63,
             //127,
